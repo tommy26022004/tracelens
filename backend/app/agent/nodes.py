@@ -24,13 +24,17 @@ from app.explainability.summary import (
     build_prompt as build_summary_prompt,
     extract_citations,
 )
-from app.ingestion.chunker import chunk_bank_statement
+from app.ingestion.chunker import chunk_bank_statement, chunk_ssm_registration
 from app.ingestion.extractor import extract_bank_statement
 from app.ingestion.parser import parse_pdf
+from app.ingestion.router import detect_document_kind
+from app.ingestion.ssm_extractor import extract_ssm_registration
 from app.ingestion.store import VectorStore
+from app.ingestion.types import DocumentKind
 from app.ratios.bank_statement_metrics import compute_metrics
 from app.ratios.five_c import FiveCAssessment, build_prompt as build_five_c_prompt
 from app.validation.checks import run_checks
+from app.validation.cross_doc import run_cross_doc_checks
 
 
 def _now() -> datetime:
@@ -38,14 +42,16 @@ def _now() -> datetime:
 
 
 def parse_node(state: AgentState) -> dict[str, object]:
-    """Step 1 — parse every uploaded PDF and embed chunks into Qdrant.
+    """Step 1 — parse every uploaded PDF and classify its document kind.
 
-    Produces `document_ids` and `needs_ocr_pages`. Statements are not
-    extracted here; that is the next node's responsibility.
+    Produces `document_ids`, `document_kinds`, and `needs_ocr_pages`.
+    Structured extraction (bank statement / SSM / ...) is the next node's
+    responsibility.
     """
     started = _now()
     pdf_paths = [Path(p) for p in state["pdf_paths"]]
     document_ids: list[str] = []
+    document_kinds: dict[str, DocumentKind] = {}
     needs_ocr: dict[str, list[int]] = {}
     parsed_cache: dict[str, list] = {}
     errors: list[AgentError] = []
@@ -66,18 +72,27 @@ def parse_node(state: AgentState) -> dict[str, object]:
         ocr_pages = [p.page for p in pages if p.needs_ocr]
         if ocr_pages:
             needs_ocr[document_id] = ocr_pages
+        document_kinds[document_id] = detect_document_kind(pages)
         document_ids.append(document_id)
 
     step = ReasoningStep(
         node="parse",
         started_at=started,
         finished_at=_now(),
-        summary=f"Parsed {len(document_ids)}/{len(pdf_paths)} PDFs",
+        summary=(
+            f"Parsed {len(document_ids)}/{len(pdf_paths)} PDFs; "
+            f"kinds: {sorted({k.value for k in document_kinds.values()})}"
+        ),
         inputs={"pdf_count": len(pdf_paths)},
-        outputs={"document_ids": document_ids, "needs_ocr_pages": needs_ocr},
+        outputs={
+            "document_ids": document_ids,
+            "document_kinds": {k: v.value for k, v in document_kinds.items()},
+            "needs_ocr_pages": needs_ocr,
+        },
     )
     return {
         "document_ids": document_ids,
+        "document_kinds": document_kinds,
         "needs_ocr_pages": needs_ocr,
         "parsed_pages": parsed_cache,  # handoff to extract_node
         "trace": [step],
@@ -86,24 +101,48 @@ def parse_node(state: AgentState) -> dict[str, object]:
 
 
 def extract_node(state: AgentState, *, store: VectorStore | None = None) -> dict[str, object]:
-    """Step 2 — turn parsed pages into structured `BankStatement`s and
-    upsert citation-preserving chunks into Qdrant.
+    """Step 2 — turn parsed pages into structured documents and upsert
+    citation-preserving chunks into Qdrant.
 
-    The chunk upsert lives here (not in `parse_node`) because the chunker
-    needs the structured statement, not raw pages.
+    Routes each document to the right extractor based on the kind that
+    `parse_node` detected. Bank statements and SSM forms are supported;
+    unknown kinds become a recoverable error so the loan officer knows
+    the document was received but couldn't be analysed.
     """
     started = _now()
     parsed_cache: dict[str, list] = state.get("parsed_pages", {})  # type: ignore[assignment]
+    document_kinds: dict[str, DocumentKind] = state.get("document_kinds", {})  # type: ignore[assignment]
     vector_store = store or VectorStore()
 
     statements = []
+    ssm_registrations = []
     citations: list[str] = []
     errors: list[AgentError] = []
     chunks_upserted = 0
 
     for document_id, pages in parsed_cache.items():
+        kind = document_kinds.get(document_id, DocumentKind.UNKNOWN)
         try:
-            stmt = extract_bank_statement(pages)
+            if kind == DocumentKind.BANK_STATEMENT:
+                stmt = extract_bank_statement(pages)
+                statements.append(stmt)
+                chunks = chunk_bank_statement(stmt, document_id=document_id)
+            elif kind == DocumentKind.SSM_REGISTRATION:
+                ssm = extract_ssm_registration(pages)
+                ssm_registrations.append(ssm)
+                chunks = chunk_ssm_registration(ssm, document_id=document_id)
+            else:
+                errors.append(
+                    AgentError(
+                        node="extract",
+                        message=(
+                            f"{document_id}: unsupported document kind ({kind.value}). "
+                            f"Add an extractor or remove from the application package."
+                        ),
+                        recoverable=True,
+                    )
+                )
+                continue
         except ValueError as exc:
             errors.append(
                 AgentError(
@@ -113,8 +152,6 @@ def extract_node(state: AgentState, *, store: VectorStore | None = None) -> dict
                 )
             )
             continue
-        statements.append(stmt)
-        chunks = chunk_bank_statement(stmt, document_id=document_id)
         chunks_upserted += vector_store.upsert_chunks(chunks)
         citations.extend(c.chunk_id for c in chunks)
 
@@ -123,33 +160,38 @@ def extract_node(state: AgentState, *, store: VectorStore | None = None) -> dict
         started_at=started,
         finished_at=_now(),
         summary=(
-            f"Extracted {len(statements)} statements, "
+            f"Extracted {len(statements)} bank statement(s), "
+            f"{len(ssm_registrations)} SSM registration(s), "
             f"upserted {chunks_upserted} chunks"
         ),
         inputs={"document_ids": list(parsed_cache.keys())},
         outputs={
             "statement_count": len(statements),
+            "ssm_count": len(ssm_registrations),
             "chunks_upserted": chunks_upserted,
         },
         citations=citations,
     )
     return {
         "statements": statements,
+        "ssm_registrations": ssm_registrations,
         "trace": [step],
         "errors": errors,
     }
 
 
 def validate_node(state: AgentState) -> dict[str, object]:
-    """Step 3 — deterministic cross-doc / intra-doc validation."""
+    """Step 3 — deterministic intra-doc + cross-doc validation."""
     started = _now()
     statements = state.get("statements", [])
-    document_ids = state.get("document_ids", [])
-    # Align by index — `extract_node` writes them in matching order, but
-    # only documents that successfully extracted appear in `statements`.
-    aligned_doc_ids = document_ids[: len(statements)]
+    ssm_list = state.get("ssm_registrations", [])
+    bank_doc_ids = _doc_ids_for_kind(state, DocumentKind.BANK_STATEMENT)
+    ssm_doc_ids = _doc_ids_for_kind(state, DocumentKind.SSM_REGISTRATION)
 
-    inconsistencies = run_checks(statements, aligned_doc_ids)
+    intra = run_checks(statements, bank_doc_ids)
+    cross = run_cross_doc_checks(statements, bank_doc_ids, ssm_list, ssm_doc_ids)
+    inconsistencies = intra + cross
+
     payload = [i.model_dump(mode="json") for i in inconsistencies]
     citations = sorted({c for i in inconsistencies for c in i.citations})
 
@@ -157,26 +199,44 @@ def validate_node(state: AgentState) -> dict[str, object]:
         node="validate",
         started_at=started,
         finished_at=_now(),
-        summary=f"Ran deterministic checks; {len(inconsistencies)} finding(s)",
-        inputs={"statement_count": len(statements)},
+        summary=(
+            f"Validation: {len(intra)} intra-doc + {len(cross)} cross-doc finding(s)"
+        ),
+        inputs={
+            "bank_statement_count": len(statements),
+            "ssm_count": len(ssm_list),
+        },
         outputs={
             "inconsistency_count": len(inconsistencies),
             "by_severity": _by_severity(inconsistencies),
+            "cross_doc_count": len(cross),
         },
         citations=citations,
     )
     return {"inconsistencies": payload, "trace": [step]}
 
 
+def _doc_ids_for_kind(state: AgentState, kind: DocumentKind) -> list[str]:
+    """Return document_ids of a specific kind, in their original parse order.
+
+    Order matters because each kind's structured-extraction list (e.g.
+    `statements`) is appended in parse order; downstream checks expect
+    the i-th id to match the i-th object.
+    """
+    document_ids = state.get("document_ids", [])
+    document_kinds = state.get("document_kinds", {})
+    return [doc_id for doc_id in document_ids if document_kinds.get(doc_id) == kind]
+
+
 def ratios_node(state: AgentState) -> dict[str, object]:
     """Step 4 — compute bank-statement-derivable metrics."""
     started = _now()
     statements = state.get("statements", [])
-    document_ids = state.get("document_ids", [])[: len(statements)]
+    bank_doc_ids = _doc_ids_for_kind(state, DocumentKind.BANK_STATEMENT)
 
     metrics = [
         compute_metrics(stmt, doc_id)
-        for stmt, doc_id in zip(statements, document_ids, strict=True)
+        for stmt, doc_id in zip(statements, bank_doc_ids, strict=True)
     ]
     payload = {
         "bank_statement_metrics": [m.model_dump(mode="json") for m in metrics]
@@ -201,13 +261,17 @@ def assess_5c_node(
     """Step 5 — 5C credit assessment via structured LLM output."""
     started = _now()
     statements = state.get("statements", [])
-    document_ids = state.get("document_ids", [])[: len(statements)]
+    ssm_list = state.get("ssm_registrations", [])
+    bank_doc_ids = _doc_ids_for_kind(state, DocumentKind.BANK_STATEMENT)
+    ssm_doc_ids = _doc_ids_for_kind(state, DocumentKind.SSM_REGISTRATION)
 
     metrics = [
         compute_metrics(stmt, doc_id)
-        for stmt, doc_id in zip(statements, document_ids, strict=True)
+        for stmt, doc_id in zip(statements, bank_doc_ids, strict=True)
     ]
-    inconsistencies = run_checks(statements, document_ids)
+    inconsistencies = run_checks(statements, bank_doc_ids) + run_cross_doc_checks(
+        statements, bank_doc_ids, ssm_list, ssm_doc_ids
+    )
 
     prompt = build_five_c_prompt(metrics, inconsistencies)
     provider = llm or get_llm()
@@ -258,7 +322,9 @@ def summarise_node(
     """Step 6 — produce a source-traced natural-language risk summary."""
     started = _now()
     statements = state.get("statements", [])
-    document_ids = state.get("document_ids", [])[: len(statements)]
+    ssm_list = state.get("ssm_registrations", [])
+    bank_doc_ids = _doc_ids_for_kind(state, DocumentKind.BANK_STATEMENT)
+    ssm_doc_ids = _doc_ids_for_kind(state, DocumentKind.SSM_REGISTRATION)
     five_c_payload = state.get("five_c", {})
     if not five_c_payload:
         raise ValueError("summarise_node requires five_c output from assess_5c_node")
@@ -266,15 +332,21 @@ def summarise_node(
 
     metrics = [
         compute_metrics(stmt, doc_id)
-        for stmt, doc_id in zip(statements, document_ids, strict=True)
+        for stmt, doc_id in zip(statements, bank_doc_ids, strict=True)
     ]
-    inconsistencies = run_checks(statements, document_ids)
+    inconsistencies = run_checks(statements, bank_doc_ids) + run_cross_doc_checks(
+        statements, bank_doc_ids, ssm_list, ssm_doc_ids
+    )
 
     allowed_chunk_ids: list[str] = []
-    for stmt, doc_id in zip(statements, document_ids, strict=True):
+    for stmt, doc_id in zip(statements, bank_doc_ids, strict=True):
         allowed_chunk_ids.append(f"{doc_id}:summary:0")
         for idx in range(len(stmt.transactions)):
             allowed_chunk_ids.append(f"{doc_id}:transaction:{idx}")
+    for ssm, doc_id in zip(ssm_list, ssm_doc_ids, strict=True):
+        allowed_chunk_ids.append(f"{doc_id}:summary:0")
+        for idx in range(len(ssm.directors)):
+            allowed_chunk_ids.append(f"{doc_id}:director:{idx}")
 
     prompt = build_summary_prompt(metrics, inconsistencies, five_c, allowed_chunk_ids)
     provider = llm or get_llm()

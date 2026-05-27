@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.ingestion.types import BankStatement, Transaction
+from app.ingestion.types import BankStatement, SSMRegistration, Transaction
 
 
 class Chunk(BaseModel):
@@ -92,6 +92,67 @@ def chunk_bank_statement(stmt: BankStatement, document_id: str) -> list[Chunk]:
                     "debit": str(txn.debit) if txn.debit is not None else None,
                     "credit": str(txn.credit) if txn.credit is not None else None,
                     "balance": str(txn.balance),
+                    "row_index": idx,
+                },
+            )
+        )
+
+    return chunks
+
+
+def _ssm_summary_text(ssm: SSMRegistration) -> str:
+    return (
+        f"SSM registration. "
+        f"Company: {ssm.company_name} ({ssm.registration_number}). "
+        f"Type: {ssm.company_type}. "
+        f"Incorporated: {ssm.incorporation_date.isoformat()}. "
+        f"Paid-up capital: RM {ssm.paid_up_capital}. "
+        f"Address: {ssm.business_address}. "
+        f"Directors: {len(ssm.directors)}."
+    )
+
+
+def _director_text(director, idx: int) -> str:
+    return (
+        f"Director #{idx + 1}: {director.name}. "
+        f"NRIC/Passport: {director.nric_or_passport or '-'}. "
+        f"Role: {director.role or '-'}."
+    )
+
+
+def chunk_ssm_registration(ssm: SSMRegistration, document_id: str) -> list[Chunk]:
+    """Citation-preserving chunks for an SSM Form 9 document."""
+    chunks: list[Chunk] = [
+        Chunk(
+            chunk_id=f"{document_id}:summary:0",
+            document_id=document_id,
+            kind="summary",
+            text=_ssm_summary_text(ssm),
+            page=1,
+            source_metadata={
+                "company_name": ssm.company_name,
+                "registration_number": ssm.registration_number,
+                "incorporation_date": ssm.incorporation_date.isoformat(),
+                "company_type": ssm.company_type,
+                "business_address": ssm.business_address,
+                "paid_up_capital": str(ssm.paid_up_capital),
+                "director_count": len(ssm.directors),
+            },
+        )
+    ]
+
+    for idx, director in enumerate(ssm.directors):
+        chunks.append(
+            Chunk(
+                chunk_id=f"{document_id}:director:{idx}",
+                document_id=document_id,
+                kind="director",
+                text=_director_text(director, idx),
+                page=1,
+                source_metadata={
+                    "name": director.name,
+                    "nric_or_passport": director.nric_or_passport,
+                    "role": director.role,
                     "row_index": idx,
                 },
             )

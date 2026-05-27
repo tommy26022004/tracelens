@@ -11,13 +11,16 @@ import tempfile
 from pathlib import Path
 
 from app.agent.graph import compile_graph
+from app.ingestion.ssm_synthetic import SSMGeneratorConfig, generate as generate_ssm
 from app.ingestion.store import COLLECTION_NAME, VectorStore
 from app.ingestion.synthetic import GeneratorConfig, generate
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        pdf, _ = generate(GeneratorConfig(seed=314, n_transactions=12), Path(tmp))
+        out = Path(tmp)
+        bank_pdf, _ = generate(GeneratorConfig(seed=314, n_transactions=12), out)
+        ssm_pdf, _ = generate_ssm(SSMGeneratorConfig(seed=314), out)
 
         store = VectorStore()
         if store._client.collection_exists(COLLECTION_NAME):  # noqa: SLF001
@@ -28,7 +31,7 @@ def main() -> int:
         result = graph.invoke(
             {
                 "application_id": "smoke-app",
-                "pdf_paths": [str(pdf)],
+                "pdf_paths": [str(bank_pdf), str(ssm_pdf)],
                 "trace": [],
                 "errors": [],
             },

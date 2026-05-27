@@ -10,5 +10,6 @@ from app.validation.checks import (
     Severity,
     run_checks,
 )
+from app.validation.cross_doc import run_cross_doc_checks
 
-__all__ = ["Inconsistency", "Severity", "run_checks"]
+__all__ = ["Inconsistency", "Severity", "run_checks", "run_cross_doc_checks"]

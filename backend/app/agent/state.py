@@ -24,7 +24,7 @@ from typing import Annotated, Any, TypedDict
 
 from pydantic import BaseModel, Field
 
-from app.ingestion.types import BankStatement
+from app.ingestion.types import BankStatement, DocumentKind, SSMRegistration
 
 
 class ReasoningStep(BaseModel):
@@ -66,11 +66,13 @@ class AgentState(TypedDict, total=False):
 
     # Step 1 — parsing/ingestion
     document_ids: list[str]
+    document_kinds: dict[str, DocumentKind]  # document_id -> detected kind
     needs_ocr_pages: dict[str, list[int]]  # document_id -> page numbers
     parsed_pages: dict[str, Any]  # document_id -> list[ParsedPage] (internal handoff)
 
-    # Step 2 — structured extraction
+    # Step 2 — structured extraction (one slot per document type)
     statements: list[BankStatement]
+    ssm_registrations: list[SSMRegistration]
 
     # Step 3 — cross-document validation (Phase 3b)
     inconsistencies: list[dict[str, Any]]

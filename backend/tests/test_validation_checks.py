@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from app.ingestion.types import BankStatement, Transaction
+from app.ingestion.types import BankStatement, Director, SSMRegistration, Transaction
 from app.validation.checks import Severity, run_checks
+from app.validation.cross_doc import run_cross_doc_checks
 
 
 def _stmt(transactions: list[Transaction], **overrides) -> BankStatement:
@@ -98,6 +99,58 @@ def test_clean_statement_produces_no_issues() -> None:
     stmt = _stmt(txns)
     issues = run_checks([stmt], ["doc-1"])
     assert issues == []
+
+
+def _ssm(company_name: str, incorporation: date = date(2024, 1, 15)) -> SSMRegistration:
+    return SSMRegistration(
+        company_name=company_name,
+        registration_number="202401000123 (1500123-X)",
+        incorporation_date=incorporation,
+        company_type="SDN BHD",
+        business_address="Lot 12, KL",
+        paid_up_capital=Decimal("100000.00"),
+        directors=[Director(name="A B", nric_or_passport="x", role="Director")],
+    )
+
+
+def test_cross_doc_holder_matches_ssm() -> None:
+    stmt = _stmt([], opening_balance=Decimal("1000.00"), closing_balance=Decimal("1000.00"),
+                 total_credits=Decimal("0"), total_debits=Decimal("0"))
+    # Bank account holder uses "S/B" abbreviation; SSM uses "SDN BHD" — should still match.
+    stmt = stmt.model_copy(update={"account_holder": "ACME TRADING S/B"})
+    ssm = _ssm("ACME TRADING SDN BHD")
+    issues = run_cross_doc_checks([stmt], ["bank-1"], [ssm], ["ssm-1"])
+    assert not any(i.code == "HOLDER_SSM_MISMATCH" for i in issues)
+
+
+def test_cross_doc_holder_mismatch_is_critical() -> None:
+    stmt = _stmt([], opening_balance=Decimal("1000.00"), closing_balance=Decimal("1000.00"),
+                 total_credits=Decimal("0"), total_debits=Decimal("0"))
+    stmt = stmt.model_copy(update={"account_holder": "BETA CORP SDN BHD"})
+    ssm = _ssm("ACME TRADING SDN BHD")
+    issues = run_cross_doc_checks([stmt], ["bank-1"], [ssm], ["ssm-1"])
+    mismatch = [i for i in issues if i.code == "HOLDER_SSM_MISMATCH"]
+    assert len(mismatch) == 1
+    assert mismatch[0].severity is Severity.CRITICAL
+    # Citation must point at both the bank and SSM summary chunks.
+    assert "bank-1:summary:0" in mismatch[0].citations
+    assert "ssm-1:summary:0" in mismatch[0].citations
+
+
+def test_cross_doc_activity_before_incorporation() -> None:
+    stmt = _stmt(
+        [],
+        opening_balance=Decimal("1000.00"),
+        closing_balance=Decimal("1000.00"),
+        total_credits=Decimal("0"),
+        total_debits=Decimal("0"),
+        statement_period_start=date(2023, 6, 1),
+        statement_period_end=date(2023, 6, 30),
+    )
+    stmt = stmt.model_copy(update={"account_holder": "ACME TRADING SDN BHD"})
+    ssm = _ssm("ACME TRADING SDN BHD", incorporation=date(2024, 1, 15))
+    issues = run_cross_doc_checks([stmt], ["bank-1"], [ssm], ["ssm-1"])
+    assert any(i.code == "ACTIVITY_BEFORE_INCORPORATION" for i in issues)
 
 
 def test_duplicate_transactions_flagged_as_info() -> None:
