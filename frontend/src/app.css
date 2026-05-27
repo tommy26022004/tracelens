@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+
+:root {
+	color-scheme: light;
+}
+
+body {
+	@apply bg-slate-50 text-slate-900 antialiased;
+	font-family:
+		ui-sans-serif,
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		Roboto,
+		sans-serif;
+}
+
+.citation {
+	@apply mx-0.5 inline-flex cursor-pointer items-center rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200 transition-colors hover:bg-indigo-100;
+}
+
+.severity-critical {
+	@apply border-red-300 bg-red-50 text-red-900;
+}
+.severity-warning {
+	@apply border-amber-300 bg-amber-50 text-amber-900;
+}
+.severity-info {
+	@apply border-slate-300 bg-slate-50 text-slate-700;
+}
+
+.rating-strong {
+	@apply bg-emerald-100 text-emerald-800;
+}
+.rating-adequate {
+	@apply bg-sky-100 text-sky-800;
+}
+.rating-weak {
+	@apply bg-red-100 text-red-800;
+}
+.rating-insufficient_data {
+	@apply bg-slate-100 text-slate-600;
+}

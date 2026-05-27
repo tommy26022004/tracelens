@@ -1,31 +1,42 @@
-# Frontend — Loan Officer Dashboard
+# sv
 
-SvelteKit UI for reviewing AI-generated SME loan risk summaries.
+Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
 
-## Bootstrap
+## Creating a project
 
-The folder is intentionally a placeholder until the dashboard work begins (Phase 5 in the proposal timeline). To initialise the SvelteKit project in place:
+If you're seeing this, you've probably already done this step. Congrats!
 
-```bash
-cd frontend
-npm create svelte@latest .
-# choose: Skeleton project, TypeScript, ESLint + Prettier
-npm install
-npm run dev -- --host
+```sh
+# create a new project
+npx sv create my-app
 ```
 
-Until then, the frontend service in `docker-compose.yml` is commented out / will exit cleanly.
+To recreate this project with the same configuration:
 
-## Planned structure
+```sh
+# recreate this project
+npx sv@0.15.3 create --template minimal --types ts --no-install .
+```
 
+## Developing
+
+Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+
+```sh
+npm run dev
+
+# or start the server and open the app in a new browser tab
+npm run dev -- --open
 ```
-src/
-├── routes/
-│   ├── login/
-│   ├── applications/       # list + detail
-│   └── applications/[id]/  # risk summary view, citations panel
-├── lib/
-│   ├── api/                # typed FastAPI client
-│   └── components/
-└── app.html
+
+## Building
+
+To create a production version of your app:
+
+```sh
+npm run build
 ```
+
+You can preview the production build with `npm run preview`.
+
+> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
