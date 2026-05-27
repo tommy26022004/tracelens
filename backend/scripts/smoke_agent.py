@@ -47,9 +47,46 @@ def main() -> int:
         if not result.get("statements"):
             print("FAIL: no statements extracted")
             return 1
+
+        # Phase 3b: show downstream-node outputs.
+        inconsistencies = result.get("inconsistencies", [])
+        print(f"inconsistencies: {len(inconsistencies)}")
+        for issue in inconsistencies:
+            print(f"  - [{issue['severity']}] {issue['code']}: {issue['message']}")
+
+        ratios = result.get("ratios", {}).get("bank_statement_metrics", [])
+        if ratios:
+            r = ratios[0]
+            print(
+                f"metrics[0]: net_change=RM{r['net_change']}, "
+                f"avg_inflow=RM{r['avg_daily_inflow']}/day, "
+                f"deposits={r['deposit_count']}"
+            )
+
+        five_c = result.get("five_c")
+        if five_c:
+            print("5C assessment:")
+            for dim in ("character", "capacity", "capital", "collateral", "conditions"):
+                d = five_c[dim]
+                print(f"  {dim:11}: {d['rating']:18}  evidence={d['evidence_chunk_ids']}")
+
+        risk_summary = result.get("risk_summary")
+        if risk_summary:
+            import json as _json
+
+            s = _json.loads(risk_summary)
+            print()
+            print("Risk summary headline:")
+            print(f"  {s['headline']}")
+            print(f"cited_chunk_ids: {s['cited_chunk_ids']}")
+
         if result.get("errors"):
-            print(f"FAIL: errors present: {result['errors']}")
-            return 1
+            print(f"errors: {result['errors']}")
+            # Citation errors are recoverable — the dashboard surfaces them.
+            fatal = [e for e in result["errors"] if not e.recoverable]
+            if fatal:
+                print(f"FAIL: fatal errors: {fatal}")
+                return 1
         print("PASS")
         return 0
 

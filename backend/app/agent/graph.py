@@ -1,14 +1,18 @@
 """Credit-assessment LangGraph.
 
-Linear topology (Phase 3a):
-    START -> parse -> extract -> END
+Linear topology (Phase 3 complete):
+    START -> parse -> extract -> validate -> ratios -> assess_5c
+          -> summarise -> END
 
-Subsequent phases add: validate -> ratios -> assess_5c -> summarise.
+`parse` + `extract` are deterministic. `validate` + `ratios` are also
+deterministic (audit-friendly baselines). `assess_5c` + `summarise`
+invoke the LLM with structured outputs and inline citations
+respectively, both producing FEATERS-aligned, source-traced artefacts.
 
 The graph is built once at import time. Callers either:
 - `compile_graph()` for an in-memory checkpointer (tests, dev),
 - `compile_graph_with_postgres(conn_string)` for production-grade
-  persistence (FEATERS audit trail).
+  persistence.
 """
 
 from __future__ import annotations
@@ -16,7 +20,14 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.nodes import extract_node, parse_node
+from app.agent.nodes import (
+    assess_5c_node,
+    extract_node,
+    parse_node,
+    ratios_node,
+    summarise_node,
+    validate_node,
+)
 from app.agent.state import AgentState
 
 
@@ -24,10 +35,18 @@ def _build_graph() -> StateGraph:
     graph: StateGraph = StateGraph(AgentState)
     graph.add_node("parse", parse_node)
     graph.add_node("extract", extract_node)
+    graph.add_node("validate", validate_node)
+    graph.add_node("ratios", ratios_node)
+    graph.add_node("assess_5c", assess_5c_node)
+    graph.add_node("summarise", summarise_node)
 
     graph.add_edge(START, "parse")
     graph.add_edge("parse", "extract")
-    graph.add_edge("extract", END)
+    graph.add_edge("extract", "validate")
+    graph.add_edge("validate", "ratios")
+    graph.add_edge("ratios", "assess_5c")
+    graph.add_edge("assess_5c", "summarise")
+    graph.add_edge("summarise", END)
     return graph
 
 

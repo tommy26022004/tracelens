@@ -18,10 +18,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.agent.state import AgentError, AgentState, ReasoningStep
+from app.core.llm import LLMProvider, get_llm
+from app.explainability.summary import (
+    RiskSummary,
+    build_prompt as build_summary_prompt,
+    extract_citations,
+)
 from app.ingestion.chunker import chunk_bank_statement
 from app.ingestion.extractor import extract_bank_statement
 from app.ingestion.parser import parse_pdf
 from app.ingestion.store import VectorStore
+from app.ratios.bank_statement_metrics import compute_metrics
+from app.ratios.five_c import FiveCAssessment, build_prompt as build_five_c_prompt
+from app.validation.checks import run_checks
 
 
 def _now() -> datetime:
@@ -129,3 +138,188 @@ def extract_node(state: AgentState, *, store: VectorStore | None = None) -> dict
         "trace": [step],
         "errors": errors,
     }
+
+
+def validate_node(state: AgentState) -> dict[str, object]:
+    """Step 3 — deterministic cross-doc / intra-doc validation."""
+    started = _now()
+    statements = state.get("statements", [])
+    document_ids = state.get("document_ids", [])
+    # Align by index — `extract_node` writes them in matching order, but
+    # only documents that successfully extracted appear in `statements`.
+    aligned_doc_ids = document_ids[: len(statements)]
+
+    inconsistencies = run_checks(statements, aligned_doc_ids)
+    payload = [i.model_dump(mode="json") for i in inconsistencies]
+    citations = sorted({c for i in inconsistencies for c in i.citations})
+
+    step = ReasoningStep(
+        node="validate",
+        started_at=started,
+        finished_at=_now(),
+        summary=f"Ran deterministic checks; {len(inconsistencies)} finding(s)",
+        inputs={"statement_count": len(statements)},
+        outputs={
+            "inconsistency_count": len(inconsistencies),
+            "by_severity": _by_severity(inconsistencies),
+        },
+        citations=citations,
+    )
+    return {"inconsistencies": payload, "trace": [step]}
+
+
+def ratios_node(state: AgentState) -> dict[str, object]:
+    """Step 4 — compute bank-statement-derivable metrics."""
+    started = _now()
+    statements = state.get("statements", [])
+    document_ids = state.get("document_ids", [])[: len(statements)]
+
+    metrics = [
+        compute_metrics(stmt, doc_id)
+        for stmt, doc_id in zip(statements, document_ids, strict=True)
+    ]
+    payload = {
+        "bank_statement_metrics": [m.model_dump(mode="json") for m in metrics]
+    }
+
+    step = ReasoningStep(
+        node="ratios",
+        started_at=started,
+        finished_at=_now(),
+        summary=f"Computed metrics for {len(metrics)} statement(s)",
+        inputs={"statement_count": len(statements)},
+        outputs={"metric_set_count": len(metrics)},
+    )
+    return {"ratios": payload, "trace": [step]}
+
+
+def assess_5c_node(
+    state: AgentState,
+    *,
+    llm: LLMProvider | None = None,
+) -> dict[str, object]:
+    """Step 5 — 5C credit assessment via structured LLM output."""
+    started = _now()
+    statements = state.get("statements", [])
+    document_ids = state.get("document_ids", [])[: len(statements)]
+
+    metrics = [
+        compute_metrics(stmt, doc_id)
+        for stmt, doc_id in zip(statements, document_ids, strict=True)
+    ]
+    inconsistencies = run_checks(statements, document_ids)
+
+    prompt = build_five_c_prompt(metrics, inconsistencies)
+    provider = llm or get_llm()
+    assessment = provider.generate_structured(prompt, FiveCAssessment)
+
+    citations: list[str] = []
+    for dim in (
+        assessment.character,
+        assessment.capacity,
+        assessment.capital,
+        assessment.collateral,
+        assessment.conditions,
+    ):
+        citations.extend(dim.evidence_chunk_ids)
+
+    step = ReasoningStep(
+        node="assess_5c",
+        started_at=started,
+        finished_at=_now(),
+        summary=(
+            "5C assessment: "
+            + ", ".join(
+                f"{dim.name}={dim.rating.value}"
+                for dim in (
+                    assessment.character,
+                    assessment.capacity,
+                    assessment.capital,
+                    assessment.collateral,
+                    assessment.conditions,
+                )
+            )
+        ),
+        inputs={"metric_sets": len(metrics), "inconsistencies": len(inconsistencies)},
+        outputs=assessment.model_dump(mode="json"),
+        citations=sorted(set(citations)),
+    )
+    return {
+        "five_c": assessment.model_dump(mode="json"),
+        "trace": [step],
+    }
+
+
+def summarise_node(
+    state: AgentState,
+    *,
+    llm: LLMProvider | None = None,
+) -> dict[str, object]:
+    """Step 6 — produce a source-traced natural-language risk summary."""
+    started = _now()
+    statements = state.get("statements", [])
+    document_ids = state.get("document_ids", [])[: len(statements)]
+    five_c_payload = state.get("five_c", {})
+    if not five_c_payload:
+        raise ValueError("summarise_node requires five_c output from assess_5c_node")
+    five_c = FiveCAssessment.model_validate(five_c_payload)
+
+    metrics = [
+        compute_metrics(stmt, doc_id)
+        for stmt, doc_id in zip(statements, document_ids, strict=True)
+    ]
+    inconsistencies = run_checks(statements, document_ids)
+
+    allowed_chunk_ids: list[str] = []
+    for stmt, doc_id in zip(statements, document_ids, strict=True):
+        allowed_chunk_ids.append(f"{doc_id}:summary:0")
+        for idx in range(len(stmt.transactions)):
+            allowed_chunk_ids.append(f"{doc_id}:transaction:{idx}")
+
+    prompt = build_summary_prompt(metrics, inconsistencies, five_c, allowed_chunk_ids)
+    provider = llm or get_llm()
+    summary = provider.generate_structured(prompt, RiskSummary)
+
+    # Verify every cited chunk_id is real. We don't re-prompt the LLM —
+    # we surface the discrepancy as a recoverable error so the dashboard
+    # can show the loan officer that the AI cited something unverifiable.
+    cited = set(
+        extract_citations(summary.headline) + extract_citations(summary.body)
+    )
+    summary.cited_chunk_ids = sorted(cited)
+    invalid = sorted(cited - set(allowed_chunk_ids))
+    errors: list[AgentError] = []
+    if invalid:
+        errors.append(
+            AgentError(
+                node="summarise",
+                message=(
+                    f"Summary references chunk_ids not produced by ingestion: {invalid}. "
+                    f"Loan officer should treat affected claims as unverified."
+                ),
+                recoverable=True,
+            )
+        )
+
+    step = ReasoningStep(
+        node="summarise",
+        started_at=started,
+        finished_at=_now(),
+        summary=f"Generated risk summary with {len(cited)} citation(s)",
+        inputs={"allowed_citations": len(allowed_chunk_ids)},
+        outputs={"cited": sorted(cited), "invalid_citations": invalid},
+        citations=sorted(cited & set(allowed_chunk_ids)),
+    )
+    return {
+        "risk_summary": summary.model_dump_json(),
+        "trace": [step],
+        "errors": errors,
+    }
+
+
+def _by_severity(inconsistencies: list) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for issue in inconsistencies:
+        sev = issue.severity.value
+        counts[sev] = counts.get(sev, 0) + 1
+    return counts
