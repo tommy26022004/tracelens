@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # LLM — provider-agnostic, default Gemini free tier
     llm_provider: str = "gemini"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.5-flash"
 
     # Auth
     jwt_secret: str = "change-me-in-env"
