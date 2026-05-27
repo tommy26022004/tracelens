@@ -22,22 +22,33 @@ class EmbeddingsProvider(Protocol):
 
 
 class GeminiEmbeddings:
-    """Google `text-embedding-004` — free tier, 768-dim.
+    """Google `gemini-embedding-001` via the `google-genai` SDK.
 
-    Uses `google-generativeai` directly (no LangChain dependency) so this
-    module stays usable from ingestion code that doesn't otherwise need
-    LangChain. Falls back to deterministic zero-vectors when no API key
-    is configured, which keeps unit tests offline-friendly.
+    The native model emits 3072-dim vectors; we request a truncated
+    768-dim output so the Qdrant collection size stays compact and any
+    swap with smaller open models (e.g. BGE) stays drop-in.
+
+    Falls back to deterministic zero-cost stub vectors when no API key
+    is configured, keeping unit tests offline-friendly.
     """
 
     dimension: int = 768
-    model: str = "models/text-embedding-004"
+    model: str = "gemini-embedding-001"
 
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = api_key or settings.gemini_api_key
+        self._client = None
+
+    def _ensure_client(self):  # type: ignore[no-untyped-def]
+        if self._client is None and self._api_key:
+            from google import genai
+
+            self._client = genai.Client(api_key=self._api_key)
+        return self._client
 
     def _embed(self, text: str, task_type: str) -> list[float]:
-        if not self._api_key:
+        client = self._ensure_client()
+        if client is None:
             # Deterministic stub: hash → bounded float vector. Lets tests run
             # without network access; production paths require a real key.
             import hashlib
@@ -48,11 +59,19 @@ class GeminiEmbeddings:
             rng = _LCG(seed)
             return [rng.next_float() for _ in range(self.dimension)]
 
-        import google.generativeai as genai
+        from google.genai import types
 
-        genai.configure(api_key=self._api_key)
-        response = genai.embed_content(model=self.model, content=text, task_type=task_type)
-        return list(response["embedding"])
+        response = client.models.embed_content(
+            model=self.model,
+            contents=text,
+            config=types.EmbedContentConfig(
+                task_type=task_type,
+                output_dimensionality=self.dimension,
+            ),
+        )
+        # SDK returns response.embeddings: list[ContentEmbedding]; one item per
+        # input string. We pass a single string so we take element 0.
+        return list(response.embeddings[0].values)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [self._embed(t, task_type="RETRIEVAL_DOCUMENT") for t in texts]
