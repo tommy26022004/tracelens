@@ -1,0 +1,100 @@
+"""Chunking for vector storage.
+
+Bank statements are highly structured, so we chunk along their natural
+grain instead of using a generic sliding window:
+
+- One **summary chunk** per statement: bank, holder, period, totals.
+- One **transaction chunk** per row: date, description, amount, balance.
+
+Each chunk carries `source_metadata` so that any retrieval result can be
+cited back to a precise (document_id, page, row_index) — the FEATERS
+explainability requirement for the agent's outputs.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from app.ingestion.types import BankStatement, Transaction
+
+
+class Chunk(BaseModel):
+    """One unit of text destined for the vector store."""
+
+    chunk_id: str = Field(description="Stable id: {document_id}:{kind}:{index}")
+    document_id: str
+    kind: str  # "summary" | "transaction"
+    text: str
+    page: int
+    source_metadata: dict[str, Any]
+
+
+def _summary_text(stmt: BankStatement) -> str:
+    return (
+        f"Bank statement summary. "
+        f"Bank: {stmt.bank_name}. Account holder: {stmt.account_holder}. "
+        f"Account number: {stmt.account_number}. "
+        f"Period: {stmt.statement_period_start.isoformat()} to "
+        f"{stmt.statement_period_end.isoformat()}. "
+        f"Opening balance: {stmt.opening_balance}. "
+        f"Closing balance: {stmt.closing_balance}. "
+        f"Total credits: {stmt.total_credits}. "
+        f"Total debits: {stmt.total_debits}. "
+        f"Transactions: {len(stmt.transactions)}."
+    )
+
+
+def _transaction_text(txn: Transaction) -> str:
+    side = "credit" if txn.credit is not None else "debit"
+    amount = txn.credit if txn.credit is not None else txn.debit
+    return (
+        f"{txn.txn_date.isoformat()} | {side} | RM {amount} | "
+        f"balance RM {txn.balance} | {txn.description}"
+    )
+
+
+def chunk_bank_statement(stmt: BankStatement, document_id: str) -> list[Chunk]:
+    """Split a `BankStatement` into citation-preserving chunks."""
+    chunks: list[Chunk] = [
+        Chunk(
+            chunk_id=f"{document_id}:summary:0",
+            document_id=document_id,
+            kind="summary",
+            text=_summary_text(stmt),
+            page=1,
+            source_metadata={
+                "bank_name": stmt.bank_name,
+                "account_holder": stmt.account_holder,
+                "account_number": stmt.account_number,
+                "period_start": stmt.statement_period_start.isoformat(),
+                "period_end": stmt.statement_period_end.isoformat(),
+                "opening_balance": str(stmt.opening_balance),
+                "closing_balance": str(stmt.closing_balance),
+                "total_credits": str(stmt.total_credits),
+                "total_debits": str(stmt.total_debits),
+            },
+        )
+    ]
+
+    for idx, txn in enumerate(stmt.transactions):
+        chunks.append(
+            Chunk(
+                chunk_id=f"{document_id}:transaction:{idx}",
+                document_id=document_id,
+                kind="transaction",
+                text=_transaction_text(txn),
+                page=txn.page,
+                source_metadata={
+                    "txn_date": txn.txn_date.isoformat(),
+                    "description": txn.description,
+                    "debit": str(txn.debit) if txn.debit is not None else None,
+                    "credit": str(txn.credit) if txn.credit is not None else None,
+                    "balance": str(txn.balance),
+                    "row_index": idx,
+                },
+            )
+        )
+
+    return chunks
