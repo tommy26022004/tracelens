@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import re
 
-from app.ingestion.types import BankStatement, SSMRegistration
+from decimal import Decimal
+
+from app.ingestion.types import AuditedFinancials, BankStatement, SSMRegistration, TaxReturn
 from app.validation.checks import Inconsistency, Severity
 
 _COMPANY_SUFFIXES = (
@@ -137,15 +139,154 @@ def _check_incorporation_predates_activity(
     return issues
 
 
+def _check_declared_income_vs_deposits(
+    statements: list[BankStatement],
+    bank_doc_ids: list[str],
+    tax_list: list[TaxReturn],
+    tax_doc_ids: list[str],
+) -> list[Inconsistency]:
+    """Tax-declared gross income should be in the same ballpark as annualised
+    bank credits. >30% gap is suspicious; the message reports the gap so the
+    loan officer can decide if it's seasonality or under-declaration."""
+    if not statements or not tax_list:
+        return []
+
+    annualised_credits = Decimal(0)
+    period_days_total = 0
+    for stmt in statements:
+        annualised_credits += stmt.total_credits
+        period_days_total += max(
+            (stmt.statement_period_end - stmt.statement_period_start).days, 1
+        )
+    if period_days_total == 0:
+        return []
+    annualised = (annualised_credits * Decimal(365) / Decimal(period_days_total)).quantize(
+        Decimal("0.01")
+    )
+
+    issues: list[Inconsistency] = []
+    for tax, tax_doc_id in zip(tax_list, tax_doc_ids, strict=True):
+        declared = tax.gross_business_income
+        if declared == 0:
+            continue
+        gap = abs(annualised - declared) / declared
+        if gap > Decimal("0.30"):
+            issues.append(
+                Inconsistency(
+                    code="DECLARED_INCOME_VS_DEPOSITS",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Tax return declares gross business income RM {declared}, "
+                        f"but annualised bank credits suggest RM {annualised} "
+                        f"({gap*100:.0f}% gap). Verify whether the gap reflects "
+                        "non-business deposits, seasonality, or under-declaration."
+                    ),
+                    citations=[
+                        f"{tax_doc_id}:summary:0",
+                        *(f"{d}:summary:0" for d in bank_doc_ids),
+                    ],
+                )
+            )
+    return issues
+
+
+def _check_declared_income_vs_audited_revenue(
+    fin_list: list[AuditedFinancials],
+    fin_doc_ids: list[str],
+    tax_list: list[TaxReturn],
+    tax_doc_ids: list[str],
+) -> list[Inconsistency]:
+    """Audited revenue and tax-declared gross income should reconcile within
+    a small tolerance (the difference is typically just deductions). >10%
+    delta is worth flagging."""
+    if not fin_list or not tax_list:
+        return []
+
+    issues: list[Inconsistency] = []
+    for tax, tax_doc_id in zip(tax_list, tax_doc_ids, strict=True):
+        for fin, fin_doc_id in zip(fin_list, fin_doc_ids, strict=True):
+            if fin.financial_year_end.year != tax.year_of_assessment:
+                continue
+            audited_revenue = fin.periods[0].revenue
+            if audited_revenue == 0:
+                continue
+            delta = abs(audited_revenue - tax.gross_business_income) / audited_revenue
+            if delta > Decimal("0.10"):
+                issues.append(
+                    Inconsistency(
+                        code="AUDITED_VS_TAX_REVENUE",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"Audited revenue RM {audited_revenue} (FY{fin.financial_year_end.year}) "
+                            f"differs from tax-declared gross income RM {tax.gross_business_income} "
+                            f"by {delta*100:.0f}%."
+                        ),
+                        citations=[
+                            f"{fin_doc_id}:period:0",
+                            f"{tax_doc_id}:summary:0",
+                        ],
+                    )
+                )
+    return issues
+
+
+def _check_audited_company_vs_ssm(
+    fin_list: list[AuditedFinancials],
+    fin_doc_ids: list[str],
+    ssm_list: list[SSMRegistration],
+    ssm_doc_ids: list[str],
+) -> list[Inconsistency]:
+    """Audited statements should be for the same legal entity as SSM."""
+    if not fin_list or not ssm_list:
+        return []
+
+    issues: list[Inconsistency] = []
+    for fin, fin_doc_id in zip(fin_list, fin_doc_ids, strict=True):
+        matched = any(
+            _is_strong_match(fin.company_name, ssm.company_name) for ssm in ssm_list
+        )
+        if not matched:
+            issues.append(
+                Inconsistency(
+                    code="FINANCIALS_SSM_MISMATCH",
+                    severity=Severity.CRITICAL,
+                    message=(
+                        f"Audited financials report for '{fin.company_name}' but no SSM "
+                        f"record matches. Possible incorrect document or wrong applicant."
+                    ),
+                    citations=[
+                        f"{fin_doc_id}:summary:0",
+                        *(f"{d}:summary:0" for d in ssm_doc_ids),
+                    ],
+                )
+            )
+    return issues
+
+
 def run_cross_doc_checks(
     statements: list[BankStatement],
     bank_doc_ids: list[str],
     ssm_list: list[SSMRegistration],
     ssm_doc_ids: list[str],
+    fin_list: list[AuditedFinancials] | None = None,
+    fin_doc_ids: list[str] | None = None,
+    tax_list: list[TaxReturn] | None = None,
+    tax_doc_ids: list[str] | None = None,
 ) -> list[Inconsistency]:
+    fin_list = fin_list or []
+    fin_doc_ids = fin_doc_ids or []
+    tax_list = tax_list or []
+    tax_doc_ids = tax_doc_ids or []
     return [
         *_check_holder_vs_ssm(statements, bank_doc_ids, ssm_list, ssm_doc_ids),
         *_check_incorporation_predates_activity(
             statements, bank_doc_ids, ssm_list, ssm_doc_ids
         ),
+        *_check_declared_income_vs_deposits(
+            statements, bank_doc_ids, tax_list, tax_doc_ids
+        ),
+        *_check_declared_income_vs_audited_revenue(
+            fin_list, fin_doc_ids, tax_list, tax_doc_ids
+        ),
+        *_check_audited_company_vs_ssm(fin_list, fin_doc_ids, ssm_list, ssm_doc_ids),
     ]

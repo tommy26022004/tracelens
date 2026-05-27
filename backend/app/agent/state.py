@@ -24,7 +24,13 @@ from typing import Annotated, Any, TypedDict
 
 from pydantic import BaseModel, Field
 
-from app.ingestion.types import BankStatement, DocumentKind, SSMRegistration
+from app.ingestion.types import (
+    AuditedFinancials,
+    BankStatement,
+    DocumentKind,
+    SSMRegistration,
+    TaxReturn,
+)
 
 
 class ReasoningStep(BaseModel):
@@ -73,6 +79,8 @@ class AgentState(TypedDict, total=False):
     # Step 2 — structured extraction (one slot per document type)
     statements: list[BankStatement]
     ssm_registrations: list[SSMRegistration]
+    audited_financials: list[AuditedFinancials]
+    tax_returns: list[TaxReturn]
 
     # Step 3 — cross-document validation (Phase 3b)
     inconsistencies: list[dict[str, Any]]

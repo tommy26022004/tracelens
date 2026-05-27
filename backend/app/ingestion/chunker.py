@@ -17,7 +17,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.ingestion.types import BankStatement, SSMRegistration, Transaction
+from app.ingestion.types import (
+    AuditedFinancials,
+    BankStatement,
+    SSMRegistration,
+    TaxReturn,
+    Transaction,
+)
 
 
 class Chunk(BaseModel):
@@ -159,3 +165,100 @@ def chunk_ssm_registration(ssm: SSMRegistration, document_id: str) -> list[Chunk
         )
 
     return chunks
+
+
+def _financials_summary_text(fin: AuditedFinancials) -> str:
+    current = fin.periods[0]
+    return (
+        f"Audited financials summary. "
+        f"Company: {fin.company_name}. Auditor: {fin.auditor}. "
+        f"FY end: {fin.financial_year_end.isoformat()}. "
+        f"Revenue (current): RM {current.revenue}. "
+        f"Net profit (current): RM {current.net_profit}. "
+        f"Total equity: RM {current.total_equity}. "
+        f"Periods reported: {len(fin.periods)}."
+    )
+
+
+def _period_text(period, idx: int) -> str:
+    return (
+        f"Period {period.period_end.isoformat()}: "
+        f"revenue RM {period.revenue}, gross profit RM {period.gross_profit}, "
+        f"EBIT RM {period.ebit}, net profit RM {period.net_profit}, "
+        f"current assets RM {period.current_assets}, "
+        f"current liabilities RM {period.current_liabilities}, "
+        f"total equity RM {period.total_equity}, "
+        f"cash from ops RM {period.cash_from_operations}."
+    )
+
+
+def chunk_audited_financials(fin: AuditedFinancials, document_id: str) -> list[Chunk]:
+    chunks: list[Chunk] = [
+        Chunk(
+            chunk_id=f"{document_id}:summary:0",
+            document_id=document_id,
+            kind="summary",
+            text=_financials_summary_text(fin),
+            page=1,
+            source_metadata={
+                "company_name": fin.company_name,
+                "auditor": fin.auditor,
+                "financial_year_end": fin.financial_year_end.isoformat(),
+                "period_count": len(fin.periods),
+            },
+        )
+    ]
+    for idx, period in enumerate(fin.periods):
+        chunks.append(
+            Chunk(
+                chunk_id=f"{document_id}:period:{idx}",
+                document_id=document_id,
+                kind="period",
+                text=_period_text(period, idx),
+                page=1 if idx == 0 else 2,
+                source_metadata={
+                    "period_end": period.period_end.isoformat(),
+                    "revenue": str(period.revenue),
+                    "net_profit": str(period.net_profit),
+                    "ebit": str(period.ebit),
+                    "total_equity": str(period.total_equity),
+                    "interest_expense": str(period.interest_expense),
+                    "cash_from_operations": str(period.cash_from_operations),
+                    "current_assets": str(period.current_assets),
+                    "current_liabilities": str(period.current_liabilities),
+                    "non_current_liabilities": str(period.non_current_liabilities),
+                },
+            )
+        )
+    return chunks
+
+
+def _tax_summary_text(tax: TaxReturn) -> str:
+    return (
+        f"Tax return summary. Company: {tax.company_name}. "
+        f"Tax reference: {tax.tax_reference_number}. "
+        f"Year of assessment: {tax.year_of_assessment}. "
+        f"Gross business income: RM {tax.gross_business_income}. "
+        f"Chargeable income: RM {tax.chargeable_income}. "
+        f"Tax payable: RM {tax.tax_payable}."
+    )
+
+
+def chunk_tax_return(tax: TaxReturn, document_id: str) -> list[Chunk]:
+    return [
+        Chunk(
+            chunk_id=f"{document_id}:summary:0",
+            document_id=document_id,
+            kind="summary",
+            text=_tax_summary_text(tax),
+            page=1,
+            source_metadata={
+                "company_name": tax.company_name,
+                "tax_reference_number": tax.tax_reference_number,
+                "year_of_assessment": tax.year_of_assessment,
+                "gross_business_income": str(tax.gross_business_income),
+                "chargeable_income": str(tax.chargeable_income),
+                "tax_payable": str(tax.tax_payable),
+            },
+        )
+    ]

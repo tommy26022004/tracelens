@@ -9,5 +9,18 @@ from app.ratios.bank_statement_metrics import (
     BankStatementMetrics,
     compute_metrics,
 )
+from app.ratios.financial_ratios import (
+    FinancialRatios,
+    Ratio,
+    RatioBand,
+    compute_financial_ratios,
+)
 
-__all__ = ["BankStatementMetrics", "compute_metrics"]
+__all__ = [
+    "BankStatementMetrics",
+    "FinancialRatios",
+    "Ratio",
+    "RatioBand",
+    "compute_metrics",
+    "compute_financial_ratios",
+]

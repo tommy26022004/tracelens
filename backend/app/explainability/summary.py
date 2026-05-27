@@ -16,10 +16,13 @@ import re
 from pydantic import BaseModel, Field
 
 from app.ratios.bank_statement_metrics import BankStatementMetrics
+from app.ratios.financial_ratios import FinancialRatios
 from app.ratios.five_c import FiveCAssessment
 from app.validation.checks import Inconsistency
 
 CITATION_RE = re.compile(r"\[([^\[\]]+?)\]")
+# Inner separator — LLMs sometimes emit `[id1, id2]` instead of `[id1][id2]`.
+CITATION_SPLIT_RE = re.compile(r"\s*[,;]\s*")
 
 
 class RiskSummary(BaseModel):
@@ -47,13 +50,26 @@ def build_prompt(
     inconsistencies: list[Inconsistency],
     five_c: FiveCAssessment,
     allowed_chunk_ids: list[str],
+    *,
+    financial_ratios: list[FinancialRatios] | None = None,
 ) -> str:
+    financial_ratios = financial_ratios or []
     metrics_block = "\n".join(
         f"- {m.document_id}: net_change=RM{m.net_change}, "
         f"avg_daily_inflow=RM{m.avg_daily_inflow}, deposits={m.deposit_count}, "
         f"closing=RM{m.end_of_period_balance}"
         for m in metrics
     ) or "- (no metrics)"
+
+    ratios_block = "\n".join(
+        f"- {r.document_id} FY {r.period_end}: "
+        f"Current={r.current_ratio.value}[{r.current_ratio.band.value}], "
+        f"D/E={r.debt_to_equity.value}[{r.debt_to_equity.band.value}], "
+        f"NPM={r.net_profit_margin.value}[{r.net_profit_margin.band.value}], "
+        f"ICR={r.interest_coverage.value}[{r.interest_coverage.band.value}], "
+        f"DSR={r.dsr.value}[{r.dsr.band.value}]"
+        for r in financial_ratios
+    ) or "- (no audited financial ratios)"
 
     flags_block = "\n".join(
         f"- [{i.severity.value.upper()}] {i.message} "
@@ -91,6 +107,9 @@ Allowed chunk_ids (cite only from this list):
 Bank-statement metrics:
 {metrics_block}
 
+Financial ratios (from audited statements):
+{ratios_block}
+
 Validation findings:
 {flags_block}
 
@@ -101,5 +120,15 @@ Return a RiskSummary object."""
 
 
 def extract_citations(text: str) -> list[str]:
-    """Return every chunk_id-like token wrapped in square brackets."""
-    return CITATION_RE.findall(text)
+    """Return every chunk_id-like token wrapped in square brackets.
+
+    Handles the LLM's occasional habit of comma-joining citations inside a
+    single bracket pair (e.g. `[doc-1:period:0, doc-1:period:1]`).
+    """
+    found: list[str] = []
+    for raw in CITATION_RE.findall(text):
+        for token in CITATION_SPLIT_RE.split(raw):
+            token = token.strip()
+            if token:
+                found.append(token)
+    return found

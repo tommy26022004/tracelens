@@ -17,6 +17,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.ratios.bank_statement_metrics import BankStatementMetrics
+from app.ratios.financial_ratios import FinancialRatios
 from app.validation.checks import Inconsistency
 
 
@@ -61,8 +62,8 @@ _DIMENSION_GUIDANCE: dict[str, str] = {
         "current cash flow can service additional debt."
     ),
     "Capital": (
-        "Without audited financials, capital cannot be assessed quantitatively. "
-        "Rate as INSUFFICIENT_DATA unless evidence is exceptionally strong."
+        "If audited financials are present, use Debt-to-Equity and Total Equity to "
+        "judge the capital cushion. Otherwise rate as INSUFFICIENT_DATA."
     ),
     "Collateral": (
         "Bank statements do not disclose collateral. Rate INSUFFICIENT_DATA and "
@@ -78,12 +79,16 @@ _DIMENSION_GUIDANCE: dict[str, str] = {
 def build_prompt(
     metrics: list[BankStatementMetrics],
     inconsistencies: list[Inconsistency],
+    *,
+    financial_ratios: list[FinancialRatios] | None = None,
 ) -> str:
     """Compose a single prompt for all 5 dimensions.
 
-    The deterministic evidence (metrics + inconsistencies) is pasted in
-    full so the LLM never has to re-derive numbers from chunks.
+    The deterministic evidence (metrics + inconsistencies + financial
+    ratios) is pasted in full so the LLM never has to re-derive numbers
+    from chunks.
     """
+    financial_ratios = financial_ratios or []
     metrics_block = "\n".join(
         f"- {m.document_id}: period_days={m.period_days}, "
         f"transactions={m.transaction_count}, "
@@ -95,6 +100,20 @@ def build_prompt(
         f"balance_volatility=RM{m.balance_volatility}"
         for m in metrics
     ) or "- (no metrics)"
+
+    ratios_block = "\n".join(
+        "\n".join(
+            [
+                f"- {r.document_id} (FY end {r.period_end}):",
+                f"    Current Ratio: {r.current_ratio.value} [{r.current_ratio.band.value}]",
+                f"    Debt-to-Equity: {r.debt_to_equity.value} [{r.debt_to_equity.band.value}]",
+                f"    Net Profit Margin: {r.net_profit_margin.value} [{r.net_profit_margin.band.value}]",
+                f"    Interest Coverage: {r.interest_coverage.value} [{r.interest_coverage.band.value}]",
+                f"    DSR (est.): {r.dsr.value} [{r.dsr.band.value}]",
+            ]
+        )
+        for r in financial_ratios
+    ) or "- (no audited financial ratios — Capital/Capacity assessment is limited)"
 
     inconsistencies_block = "\n".join(
         f"- [{i.severity.value.upper()}] {i.code}: {i.message} "
@@ -122,6 +141,9 @@ Per-dimension guidance:
 
 Evidence — deterministic metrics:
 {metrics_block}
+
+Evidence — financial ratios from audited statements:
+{ratios_block}
 
 Evidence — validation findings:
 {inconsistencies_block}
