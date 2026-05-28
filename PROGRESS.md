@@ -22,8 +22,12 @@ Trước khi làm bất cứ việc gì, BẮT BUỘC:
 
 1. Đọc file PROGRESS.md ở root repo — chứa current status, architecture
    decisions, known issues, history, và quy tắc làm việc.
-2. Đọc docs/FYP_Context.md để hiểu background project.
-3. Nếu task chạm vào code, đọc luôn các file liên quan trước khi sửa.
+2. Scan mục "## Pending milestones — agent phải hỏi user" trong
+   PROGRESS.md. Nếu hôm nay >= ETA của item nào, HỎI TÔI ngay câu đầu
+   tiên (trước khi bắt đầu task) để cập nhật trạng thái. Giúp tôi không
+   bỏ sót follow-up.
+3. Đọc docs/FYP_Context.md để hiểu background project.
+4. Nếu task chạm vào code, đọc luôn các file liên quan trước khi sửa.
 
 Trong khi làm việc:
 - Tôn trọng "Architecture decisions (locked)" trong PROGRESS.md — đừng tự
@@ -37,6 +41,11 @@ Sau khi hoàn thành công việc:
   commits).
 - Cập nhật "## Current status" + "## Known issues" nếu phase / metric /
   issue thay đổi.
+- Nếu pending milestone nào được resolve trong session này, XOÁ khỏi
+  "## Pending milestones" và move outcome sang Current status / Next steps.
+- Nếu xuất hiện pending milestone mới (vd: vừa submit thứ gì chờ
+  approve, vừa start user study chờ kết quả), THÊM vào "## Pending
+  milestones" với ETA cụ thể.
 - Nếu có dependency mới, ghi rõ trong entry.
 
 Task của tôi là: [TÔI VIẾT TASK Ở ĐÂY]
@@ -53,6 +62,37 @@ Task của tôi là: [TÔI VIẾT TASK Ở ĐÂY]
 > file dài; ChatGPT free tier có thể không follow rule sau ~20 turns
 > (drift). Verify agent có thực sự đọc bằng cách hỏi: *"Tóm tắt
 > Architecture decisions trong PROGRESS.md cho tôi"* trước khi cho làm task.
+
+---
+
+## Pending milestones — agent phải hỏi user
+
+> **Đây là danh sách những việc đang treo ngoài tầm kiểm soát của code**
+> (chờ approve, chờ recruit người, chờ supervisor feedback, …). Mỗi
+> agent khi vào session mới **PHẢI scan mục này TRƯỚC** rồi hỏi user
+> trạng thái từng item nếu đã quá ETA. Mục đích: giúp user không bỏ sót
+> follow-up. Sau khi user trả lời, update item tương ứng + thêm entry
+> vào `## History`. Khi item xong, **xoá nó khỏi mục này** và move
+> outcome sang `## Current status` / `## Next steps`.
+
+| Item | Submitted/Started | ETA | Cách hỏi user |
+|---|---|---|---|
+| FYP title approval (FYPPGBank portal) | 2026-05-28 | ~2026-05-31 | "Title đã được approve chưa? Có thấy supervisor được assign chưa?" |
+| Supervisor assignment | Depends on title approval | ~2026-05-31 | "Đã biết supervisor là ai chưa? Có cần help draft email intro không?" |
+| SUS user study (5-10 participants) | Not started — needs supervisor | TBD | "Đã contact ai cho user study chưa? Cần help soạn email recruitment không?" |
+| Real anonymised SME documents | Not started — needs supervisor | TBD | "Supervisor đã share real samples chưa? Nếu có, có muốn chạy lại evaluation harness trên data thật không?" |
+| Rotate Gemini API key | Flagged 2026-05-27 | ASAP | "Đã rotate API key chưa? Key cũ đã expose trong chat Claude (~2026-05-27)." |
+
+### Cách follow-up hiệu quả
+
+- **Đầu session**: nếu hôm nay >= ETA của item nào, hỏi item đó ngay
+  câu đầu tiên (trước khi nghe task mới của user).
+- **Khi user trả lời "chưa"**: đừng push. Ghi nhận và gợi ý thời gian
+  hỏi lại (vd: "OK em sẽ hỏi lại nếu sau 3 ngày nữa chưa có update").
+- **Khi user trả lời "xong"**: lấy thông tin cụ thể (ngày, tên
+  supervisor, link, v.v.) → update PROGRESS.md → xoá khỏi mục pending.
+- **Nếu item bị stuck dài hạn**: gợi ý alternative (vd supervisor
+  không phản hồi → suggest hỏi APU FYP coordinator).
 
 ---
 
@@ -197,6 +237,36 @@ Refer to [`memory/project_repo_architecture.md`](memory/project_repo_architectur
 ## History
 
 > Newest first. Mỗi entry là 1 lần làm việc đáng record.
+
+### 2026-05-28 — Claude (Opus 4.7) — Add pending-milestones follow-up system
+
+**What changed:**
+- Thêm mục `## Pending milestones — agent phải hỏi user` vào đầu
+  PROGRESS.md (ngay sau Onboarding prompt). Bảng 5 cột: Item / Started /
+  ETA / Cách hỏi user.
+- 5 item ban đầu: title approval (ETA 2026-05-31), supervisor
+  assignment, SUS user study, real anonymised documents, Gemini API key
+  rotation.
+- Cập nhật onboarding prompt template: agent phải scan mục này và hỏi
+  user về item nào đã quá ETA TRƯỚC khi nhận task mới.
+- Cập nhật rules: khi pending milestone resolve → move sang Current
+  status; khi xuất hiện milestone mới → thêm vào bảng với ETA.
+
+**Why:**
+- User cần "agent hỏi proactive" để không quên follow-up những thứ
+  blocking ngoài tầm kiểm soát của code (vd: chờ supervisor, chờ
+  approve administrative).
+- Tránh tình trạng user nhớ ra việc cần làm khi đã muộn.
+
+**Impact:**
+- Mỗi agent kế tiếp khi vào session sẽ check ETA và hỏi user → user
+  không phải tự nhớ.
+- Notepad prompt template bạn lưu trước đó nên copy lại từ PROGRESS.md
+  (mục "Onboarding prompt cho agent mới") để có version mới.
+
+**Commits:** *(uncommitted khi viết entry này)*
+
+---
 
 ### 2026-05-28 — User — FYP title submitted to FYPPGBank portal
 
