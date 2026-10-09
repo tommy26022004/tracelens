@@ -1,111 +1,163 @@
-# FYP — Agentic AI for Explainable SME Loan Document Analysis
+<div align="center">
+  <img src="frontend/src/lib/assets/tracelens-logo.png" alt="TraceLens" width="360" />
 
-Final-Year Project · Asia Pacific University (Malaysia) · BSc (Hons) IT — FinTech
-Tran Quang Dat (TP079959) · 2026
+  <h3>Explainable AI for Malaysian SME loan document analysis</h3>
 
-An agentic AI system that ingests Malaysian SME loan document packages
-(bank statements, audited financials, SSM registration, tax returns),
-cross-validates financial figures across documents using a LangGraph ReAct
-agent, and produces a source-traced, BNM FEATERS-aligned risk summary for
-the loan officer.
+  <p>
+    A full-stack decision-support prototype that converts multi-document loan packages
+    into traceable financial analysis, evidence-linked 5C assessments, and human-review actions.
+  </p>
 
-> The system does **not** make credit decisions. It assists human loan
-> officers by automating extraction, cross-validation, and explanation.
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+" />
+    <img src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+    <img src="https://img.shields.io/badge/LangGraph-Agent_Workflow-1C3C3C" alt="LangGraph" />
+    <img src="https://img.shields.io/badge/SvelteKit-Dashboard-FF3E00?logo=svelte&logoColor=white" alt="SvelteKit" />
+    <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker Compose" />
+    <img src="https://img.shields.io/badge/Backend_Tests-133_passing-2EA44F" alt="133 backend tests passing" />
+    <img src="https://img.shields.io/badge/Frontend_Tests-20_passing-2EA44F" alt="20 frontend tests passing" />
+  </p>
+</div>
 
-See [`docs/FYP_Proposal.md`](docs/FYP_Proposal.md) for the full proposal and
-[`docs/FYP_Context.md`](docs/FYP_Context.md) for background and decisions.
+> [!IMPORTANT]
+> TraceLens is an academic decision-support prototype. It does **not** approve or reject loans, and every generated conclusion remains subject to human verification.
 
----
+## Product preview
 
-## Repo layout
+| Explainable assessment | Source and retrieval review |
+|---|---|
+| <img src="docs/assets/tracelens-overview.png" alt="TraceLens explainable credit assessment dashboard" /> | <img src="docs/assets/tracelens-evidence.png" alt="TraceLens source evidence and retrieval dashboard" /> |
 
+## What it does
+
+- Processes loan packages containing bank statements, audited financial statements, SSM records, tax returns, management accounts, forecasts, and facility documents.
+- Extracts structured financial and business data while retaining page-level source provenance.
+- Reconciles bank movements and validates identities, periods, units, and figures across documents.
+- Calculates financial ratios and produces a provisional 5C assessment through a LangGraph workflow.
+- Links generated claims back to retrieved excerpts and original PDF pages for review.
+- Surfaces missing evidence, inconsistencies, and recommended human checks instead of hiding uncertainty.
+- Supports Gemini and Groq through a provider abstraction with deterministic fallback behaviour.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[PDF loan package] --> B[Parsing and document routing]
+    B --> C[Structured extraction]
+    C --> D[Cross-document validation]
+    C --> E[Qdrant evidence index]
+    D --> F[Financial and bank metrics]
+    E --> G[Evidence retrieval]
+    F --> H[LangGraph 5C assessment]
+    G --> H
+    H --> I[Traceable risk summary]
+    I --> J[SvelteKit review dashboard]
+    J --> K[Human verification]
 ```
-FYP/
-├── backend/             # FastAPI + LangGraph + Qdrant client (uv-managed)
-│   ├── app/
-│   │   ├── api/         # HTTP routes
-│   │   ├── core/        # config, db, llm provider abstraction
-│   │   ├── ingestion/   # PyMuPDF / pdfplumber / Tesseract OCR
-│   │   ├── agent/       # LangGraph ReAct graph + tools
-│   │   ├── extraction/  # financial figure extraction
-│   │   ├── validation/  # cross-document checks
-│   │   ├── ratios/      # DSR, D/E, 5C scoring
-│   │   ├── explainability/  # source-traced citations
-│   │   ├── models/      # SQLAlchemy ORM
-│   │   └── schemas/     # Pydantic DTOs
-│   ├── tests/
-│   └── alembic/
-├── frontend/            # SvelteKit loan-officer dashboard (placeholder)
-├── infra/docker/        # extra container assets (init SQL, etc.)
-├── data/                # sample documents (gitignored)
-├── docs/                # proposal, context, design notes
-└── docker-compose.yml   # full stack: backend + frontend + postgres + redis + qdrant
-```
 
----
+The API is implemented with FastAPI. PostgreSQL, Redis, and Qdrant are provisioned through Docker Compose; the current research prototype keeps some analysis and review history in memory.
 
-## Tech stack
+## Validated workload
 
-| Layer | Tool | Notes |
-|---|---|---|
-| Agent | LangGraph (ReAct) | Same framework used at Kollect internship |
-| LLM | Google Gemini API (Flash, free tier) | Wrapped behind provider-agnostic `app.core.llm` |
-| Doc parsing | PyMuPDF + pdfplumber + Tesseract OCR | The genuinely new research area |
-| Vector DB | Qdrant (self-hosted) | |
-| Backend | FastAPI + SQLAlchemy + Alembic | uv for dependency management |
-| Frontend | SvelteKit | |
-| Data stores | PostgreSQL 16, Redis 7 | |
-| Infra | Docker Compose | localhost demo |
+The largest end-to-end scenario currently exercised by the project contains:
 
----
+| Measure | Result |
+|---|---:|
+| Documents processed | 32 / 32 |
+| PDF pages parsed | 337 |
+| Evidence chunks indexed | 1,101 |
+| Failed documents | 0 |
+| Backend tests | 133 passed, 1 skipped |
+| Frontend tests | 20 passed |
 
-## Local development
+The workload uses synthetic documents designed for repeatable academic evaluation. Processing success does not establish creditworthiness or the factual correctness of source documents.
 
-### Prerequisites
+## Technology
+
+| Area | Stack |
+|---|---|
+| Backend | Python, FastAPI, Pydantic |
+| Agent workflow | LangGraph |
+| LLM providers | Gemini API, Groq API |
+| Document processing | PyMuPDF, pdfplumber, Tesseract-ready OCR pipeline |
+| Retrieval | Qdrant with local or Gemini embeddings |
+| Data services | PostgreSQL, Redis |
+| Frontend | SvelteKit, TypeScript, Tailwind CSS |
+| Infrastructure | Docker Compose |
+| Quality | pytest, Node test runner, Svelte Check, Ruff |
+
+## Quick start
+
+### Requirements
+
 - Docker Desktop
-- [`uv`](https://docs.astral.sh/uv/) for the backend
-- Node 20+ for the frontend (once initialised)
+- A Gemini or Groq API key
 
-### Bring up the stack
+### Run with Docker Compose
 
 ```bash
-# 1. Configure secrets
 cp backend/.env.example backend/.env
-# fill in GEMINI_API_KEY etc.
+# Add GEMINI_API_KEY or GROQ_API_KEY to backend/.env
 
-# 2. Infra only (postgres + redis + qdrant)
-docker compose up -d postgres redis qdrant
-
-# 3. Backend (host, with hot reload)
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload
-
-# 4. Or run everything containerised
 docker compose up --build
 ```
 
-The backend exposes:
-- Swagger UI → http://localhost:8000/docs
-- Health    → http://localhost:8000/health
+Open the following services:
 
-### Tests
+- Dashboard: <http://localhost:5173>
+- API documentation: <http://localhost:8000/docs>
+- Qdrant dashboard: <http://localhost:6333/dashboard>
+
+See [HOW_TO_RUN.md](HOW_TO_RUN.md) for local development, operational notes, and citation-review guidance.
+
+## Tests
 
 ```bash
+# Backend
 cd backend
+uv sync
 uv run pytest
+
+# Frontend
+cd ../frontend
+npm install
+npm test
+npm run check
 ```
 
----
+## Repository structure
 
-## Roadmap (mapped to proposal timeline)
+```text
+.
+├── backend/
+│   ├── app/agent/          # LangGraph workflow, retrieval, fallback reasoning
+│   ├── app/api/            # Analysis, evidence, case, and history endpoints
+│   ├── app/ingestion/      # Parsing, extraction, provenance, package inventory
+│   ├── app/ratios/         # Bank metrics, financial ratios, 5C models
+│   ├── app/validation/     # Intra- and cross-document checks
+│   ├── scripts/            # Synthetic scenarios and benchmark tooling
+│   └── tests/              # Unit, integration, regression, and E2E tests
+├── frontend/               # SvelteKit analysis and evidence-review dashboard
+├── docs/                   # Design, evaluation, and development documentation
+├── data/                   # Local/generated test documents; excluded from Git
+└── docker-compose.yml      # Full local stack
+```
 
-| Phase | Folder mostly touched |
-|---|---|
-| 1 — Research & Design | `docs/` |
-| 2 — Document Pipeline | `backend/app/ingestion/` |
-| 3 — Agent Development | `backend/app/agent/`, `extraction/`, `validation/`, `ratios/` |
-| 4 — Explainability    | `backend/app/explainability/` |
-| 5 — Dashboard         | `frontend/` |
-| 6 — Evaluation        | `backend/tests/`, `docs/evaluation/` |
-| 7 — Write-up          | `docs/` |
+## Responsible-use boundaries
+
+- Generated ratings are provisional and must be reviewed by a qualified human.
+- Similarity scores are retrieval signals, not confidence scores or lending decisions.
+- Source documents are reported evidence and are not independently verified by the system.
+- The current source-document endpoints are intended for local research use and are not production-hardened.
+- Use synthetic or appropriately authorised documents only.
+
+## Documentation
+
+- [Run and review guide](HOW_TO_RUN.md)
+- [Realistic package specification](docs/REALISTIC_PACKAGE_SPEC.md)
+- [Development history](docs/DEVELOPMENT_HISTORY.md)
+- [Project progress](PROGRESS.md)
+
+## Author
+
+Built by **Tran Quang Dat** as a 2026 final-year FinTech project at Asia Pacific University, Malaysia.
