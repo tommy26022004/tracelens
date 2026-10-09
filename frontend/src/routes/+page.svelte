@@ -1,5 +1,6 @@
 <script lang="ts">
     import { bankReconciliation } from '$lib/bankReconciliation';
+    import { apiUrl } from '$lib/http';
     import { onMount } from 'svelte';
     let savedResult = $state(false);
     let loadingSaved = $state(false);
@@ -7,7 +8,7 @@
         const id = new URL(window.location.href).searchParams.get('saved');
         if (!id) return;
         loadingSaved = true;
-        void fetch(`/api/history/${encodeURIComponent(id)}`).then(async (response) => {
+        void fetch(apiUrl(`/api/history/${encodeURIComponent(id)}`)).then(async (response) => {
             if (!response.ok) throw new Error('Saved analysis could not be loaded.');
             const record = await response.json();
             if (record.category !== 'analysis' || !record.result) throw new Error('No saved analysis result is available.');

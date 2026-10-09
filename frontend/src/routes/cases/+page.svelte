@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
+    import { apiUrl } from '$lib/http';
     type CaseRecord = { id: string; company: string; reference: string; environment: string; status: string; updated_at: string; runs: { id: string; application_id: string; created_at: string; document_count: number }[]; events: { at: string; status: string; note: string; run_id: string | null }[] };
     type Run = { id: string; title: string; application_id: string; created_at: string; category: string; status: string };
     let cases: CaseRecord[] = $state([]);
@@ -19,7 +20,7 @@
     const visible = $derived(cases.filter((item) => `${item.company} ${item.reference}`.toLowerCase().includes(search.toLowerCase())));
 
     async function request(path: string, payload?: unknown) {
-        const response = await fetch(path, payload ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) } : {});
+        const response = await fetch(apiUrl(path), payload ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) } : {});
         if (!response.ok) { const problem = await response.json(); throw new Error(typeof problem.detail === 'string' ? problem.detail : 'Request failed. Check the form and retry.'); }
         return response.json();
     }

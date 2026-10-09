@@ -38,7 +38,10 @@ class VectorStore:
         client: QdrantClient | None = None,
         embeddings: EmbeddingsProvider | None = None,
     ) -> None:
-        self._client = client or QdrantClient(url=settings.qdrant_url)
+        self._client = client or QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+        )
         self._embeddings = embeddings or get_embeddings()
 
     @property

@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: tracelens-api
+    runtime: docker
+    plan: free
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LLM_PROVIDER
+        value: groq
+      - key: EMBEDDINGS_PROVIDER
+        value: local
+      - key: GROQ_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SOURCE_DOCUMENTS_DIR
+        value: /tmp/tracelens/source_documents
+      - key: JWT_SECRET
+        generateValue: true
+    buildFilter:
+      paths:
+        - backend/**

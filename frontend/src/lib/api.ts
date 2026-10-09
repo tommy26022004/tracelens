@@ -1,4 +1,5 @@
 import type { AnalysisJobResponse, AnalysisResponse, ChunkDetail } from './types';
+import { apiUrl } from './http';
 
 export interface AnalysisProgress {
 	progress: number;
@@ -24,7 +25,7 @@ export async function analyseApplication(
 	for (const file of files) {
 		form.append('files', file, file.name);
 	}
-	const res = await fetch('/api/applications/analyse/jobs', {
+	const res = await fetch(apiUrl('/api/applications/analyse/jobs'), {
 		method: 'POST',
 		body: form
 	});
@@ -40,7 +41,7 @@ export async function analyseApplication(
 			throw new Error(friendlyAnalysisError(job.error ?? 'Analysis job failed'));
 		}
 		await new Promise((resolve) => setTimeout(resolve, 500));
-		const statusResponse = await fetch(`/api/applications/analyse/jobs/${job.job_id}`);
+		const statusResponse = await fetch(apiUrl(`/api/applications/analyse/jobs/${job.job_id}`));
 		if (!statusResponse.ok) {
 			throw new Error(`Job status failed (${statusResponse.status})`);
 		}
@@ -59,12 +60,17 @@ export async function fetchChunk(chunkId: string, applicationId?: string): Promi
 	const index = parts[parts.length - 1];
 	const kind = parts[parts.length - 2];
 	const documentId = parts.slice(0, -2).join(':');
-	const res = await fetch(
-        `/api/applications/chunks/${documentId.split('/').map(encodeURIComponent).join('/')}/${kind}/${index}` +
-        (applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : '')
-	);
+	const res = await fetch(apiUrl(
+		`/api/applications/chunks/${documentId.split('/').map(encodeURIComponent).join('/')}/${kind}/${index}` +
+		(applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : '')
+	));
 	if (!res.ok) {
 		throw new Error(`Chunk lookup failed (${res.status})`);
 	}
-	return (await res.json()) as ChunkDetail;
+	const chunk = (await res.json()) as ChunkDetail;
+	return {
+		...chunk,
+		pdf_url: chunk.pdf_url ? apiUrl(chunk.pdf_url) : null,
+		preview_url: chunk.preview_url ? apiUrl(chunk.preview_url) : null
+	};
 }

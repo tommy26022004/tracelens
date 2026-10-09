@@ -3,6 +3,7 @@
     import type { AnalysisResponse } from '$lib/types';
     import { assessmentParagraphs } from '$lib/assessmentText';
     import { linkedFollowUps } from '$lib/historyLinks';
+    import { apiUrl } from '$lib/http';
 
     type RecordItem = {
         id: string; created_at: string; category: string; title: string; status: string;
@@ -44,7 +45,7 @@
         snapshotLoading = entry.id;
         error = '';
         try {
-            const response = await fetch(`/api/history/${entry.id}`);
+            const response = await fetch(apiUrl(`/api/history/${entry.id}`));
             if (!response.ok) throw new Error('Could not read saved result.');
             const record = await response.json();
             if (!record.result) throw new Error('No analysis snapshot is available for this entry.');
@@ -61,7 +62,7 @@
         loading = true;
         error = '';
         try {
-            const response = await fetch(`/api/history?limit=100&offset=${append ? records.length : 0}`);
+            const response = await fetch(apiUrl(`/api/history?limit=100&offset=${append ? records.length : 0}`));
             if (!response.ok) throw new Error('Could not load history. Check the backend connection and retry.');
             const data = await response.json();
             records = append ? [...records, ...data.items] : data.items;
@@ -79,7 +80,7 @@
         error = '';
         notice = '';
         try {
-            const response = await fetch('/api/history', {
+            const response = await fetch(apiUrl('/api/history'), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ category, status, title, details, evidence, related_id: relatedId, version, expected, actual, improvement })
             });
@@ -99,7 +100,7 @@
     async function download(entry: RecordItem) {
         error = '';
         try {
-            const response = await fetch(`/api/history/${entry.id}`);
+            const response = await fetch(apiUrl(`/api/history/${entry.id}`));
             if (!response.ok) throw new Error('Could not export this record.');
             const content = await response.json();
             const url = URL.createObjectURL(new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' }));
