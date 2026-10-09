@@ -59,22 +59,26 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: http://backend:8000
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     volumes:
       - ./frontend:/app
       - /app/node_modules
-    profiles:
-      - frontend  # opt-in until SvelteKit is initialised: `docker compose --profile frontend up`
 
 volumes:
   postgres_data:

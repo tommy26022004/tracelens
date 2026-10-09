@@ -33,3 +33,9 @@ def test_ingest_and_search_against_real_qdrant(tmp_path: Path) -> None:
     hits = store.semantic_search("opening and closing balance", limit=3, document_id="pytest-doc")
     assert hits, "Expected at least one hit from semantic search"
     assert {h.kind for h in hits} <= {"summary", "transaction"}
+
+    last_chunk_id = f"pytest-doc:transaction:{len(statement.transactions) - 1}"
+    exact = store.get_chunk(last_chunk_id)
+    assert exact is not None
+    assert exact.chunk_id == last_chunk_id
+    assert exact.document_id == "pytest-doc"

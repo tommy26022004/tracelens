@@ -27,7 +27,7 @@ class RetrievalHit:
     document_id: str
     kind: str
     text: str
-    page: int
+    page: int | None
     score: float
     source_metadata: dict[str, Any]
 
@@ -40,6 +40,14 @@ class VectorStore:
     ) -> None:
         self._client = client or QdrantClient(url=settings.qdrant_url)
         self._embeddings = embeddings or get_embeddings()
+
+    @property
+    def embedding_space(self) -> str:
+        return getattr(
+            self._embeddings,
+            "space_id",
+            f"{type(self._embeddings).__name__}:{self._embeddings.dimension}",
+        )
 
     def ensure_collection(self) -> None:
         """Create the collection if it doesn't already exist."""
@@ -69,6 +77,7 @@ class VectorStore:
                     "text": chunk.text,
                     "page": chunk.page,
                     "source_metadata": chunk.source_metadata,
+                    "embedding_space": self.embedding_space,
                 },
             )
             for chunk, vector in zip(chunks, vectors, strict=True)
@@ -83,11 +92,35 @@ class VectorStore:
         limit: int = 5,
         document_id: str | None = None,
         kind: str | None = None,
+        application_id: str | None = None,
+        document_kinds: list[str] | None = None,
+        score_threshold: float | None = None,
     ) -> list[RetrievalHit]:
         self.ensure_collection()
         vector = self._embeddings.embed_query(query)
 
-        must: list[qmodels.FieldCondition] = []
+        must: list[qmodels.FieldCondition] = [
+            qmodels.FieldCondition(
+                key="embedding_space", match=qmodels.MatchValue(value=self.embedding_space)
+            )
+        ]
+        if application_id is not None:
+            if not application_id.strip():
+                raise ValueError("application_id cannot be empty")
+            must.append(
+                qmodels.FieldCondition(
+                    key="source_metadata.application_id",
+                    match=qmodels.MatchValue(value=application_id),
+                )
+            )
+        if document_kinds is not None:
+            if not document_kinds:
+                return []
+            must.append(
+                qmodels.FieldCondition(
+                    key="source_metadata.document_kind", match=qmodels.MatchAny(any=document_kinds)
+                )
+            )
         if document_id is not None:
             must.append(
                 qmodels.FieldCondition(
@@ -95,9 +128,7 @@ class VectorStore:
                 )
             )
         if kind is not None:
-            must.append(
-                qmodels.FieldCondition(key="kind", match=qmodels.MatchValue(value=kind))
-            )
+            must.append(qmodels.FieldCondition(key="kind", match=qmodels.MatchValue(value=kind)))
         query_filter = qmodels.Filter(must=must) if must else None
 
         results = self._client.query_points(
@@ -106,6 +137,7 @@ class VectorStore:
             limit=limit,
             query_filter=query_filter,
             with_payload=True,
+            score_threshold=score_threshold,
         ).points
 
         return [
@@ -120,6 +152,35 @@ class VectorStore:
             )
             for p in results
         ]
+
+    def get_chunk(self, chunk_id: str, *, application_id: str | None = None) -> RetrievalHit | None:
+        """Retrieve one citation chunk by its exact stable Qdrant point id."""
+        self.ensure_collection()
+        points = self._client.retrieve(
+            collection_name=COLLECTION_NAME,
+            ids=[_stable_point_id(chunk_id)],
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not points:
+            return None
+        payload = points[0].payload or {}
+        if payload.get("chunk_id") != chunk_id:
+            return None
+        if application_id is not None and (
+            not application_id.strip()
+            or payload.get("source_metadata", {}).get("application_id") != application_id
+        ):
+            return None
+        return RetrievalHit(
+            chunk_id=payload["chunk_id"],
+            document_id=payload["document_id"],
+            kind=payload["kind"],
+            text=payload["text"],
+            page=payload["page"],
+            score=1.0,
+            source_metadata=payload.get("source_metadata", {}),
+        )
 
     def delete_document(self, document_id: str) -> None:
         self._client.delete(

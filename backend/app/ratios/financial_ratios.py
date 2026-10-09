@@ -37,11 +37,15 @@ class Ratio(BaseModel):
 class FinancialRatios(BaseModel):
     document_id: str
     period_end: str
+    source_display_unit: str = "RM"
+    canonical_unit: str = "RM"
+    unit_multiplier: Decimal = Decimal("1")
+    inputs: dict[str, Decimal] = Field(default_factory=dict)
     current_ratio: Ratio
     debt_to_equity: Ratio
     net_profit_margin: Ratio
     interest_coverage: Ratio
-    dsr: Ratio = Field(description="Debt Service Ratio against assumed annual debt service")
+    dsr: Ratio = Field(description="Unavailable without verified annual debt service")
 
 
 def _safe_div(a: Decimal, b: Decimal) -> Decimal | None:
@@ -156,38 +160,14 @@ def _interest_coverage(period: FinancialPeriod) -> Ratio:
 
 
 def _dsr(period: FinancialPeriod) -> Ratio:
-    """Debt Service Ratio.
-
-    Real DSR requires the proposed loan's debt-service schedule. We
-    estimate annual debt service as `interest_expense + 10% of total
-    debt` (a common SME amortisation proxy). This gives the loan
-    officer an initial signal; the dashboard's `recommended_human_checks`
-    list will tell them to refine with actual amortisation terms.
-    """
-    estimated_principal_repayment = (
-        period.current_liabilities + period.non_current_liabilities
-    ) * Decimal("0.10")
-    annual_debt_service = period.interest_expense + estimated_principal_repayment
-    value = _safe_div(period.cash_from_operations, annual_debt_service)
-    band = RatioBand.INSUFFICIENT_DATA
-    if value is not None:
-        if value >= Decimal("1.5"):
-            band = RatioBand.HEALTHY
-        elif value >= Decimal("1.2"):
-            band = RatioBand.ACCEPTABLE
-        elif value >= Decimal("1.0"):
-            band = RatioBand.STRETCHED
-        else:
-            band = RatioBand.DISTRESSED
     return Ratio(
-        name="Debt Service Ratio (est.)",
-        value=value,
-        band=band,
-        formula="cash_from_operations / (interest_expense + 10% × total_debt)",
+        name="Debt Service Coverage — unavailable",
+        value=None,
+        band=RatioBand.INSUFFICIENT_DATA,
+        formula="cash_from_operations / verified annual principal and interest repayments",
         explanation=(
-            "Estimated cash-flow coverage of debt service. <1.0 means operations "
-            "alone cannot cover assumed servicing; needs refinement against "
-            "the proposed loan's actual amortisation schedule."
+            "No verified annual repayment schedule is supplied. Do not substitute "
+            "a percentage of liabilities for principal repayments or infer repayment strength."
         ),
     )
 
@@ -198,6 +178,23 @@ def compute_financial_ratios(fin: AuditedFinancials, document_id: str) -> Financ
     return FinancialRatios(
         document_id=document_id,
         period_end=period.period_end.isoformat(),
+        source_display_unit=fin.display_unit,
+        canonical_unit=fin.canonical_unit,
+        unit_multiplier=fin.unit_multiplier,
+        inputs={
+            name: getattr(period, name)
+            for name in (
+                "current_assets",
+                "current_liabilities",
+                "non_current_liabilities",
+                "total_equity",
+                "net_profit",
+                "revenue",
+                "ebit",
+                "interest_expense",
+                "cash_from_operations",
+            )
+        },
         current_ratio=_current_ratio(period),
         debt_to_equity=_debt_to_equity(period),
         net_profit_margin=_net_profit_margin(period),

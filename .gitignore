@@ -207,3 +207,9 @@ Thumbs.db
 
 # Claude Code session artefacts (memory lives in ~/.claude, not here)
 .claude/
+
+# Local PDF rendering artifacts
+/tmp/
+/backend/data/source_documents/
+/backend/data/development_history/
+/data/development_history/

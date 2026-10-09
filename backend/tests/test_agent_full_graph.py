@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from pathlib import Path
 from typing import TypeVar
 
@@ -26,7 +27,7 @@ from app.agent.nodes import (
 from app.agent.state import AgentState
 from app.explainability.summary import RiskSummary
 from app.ingestion.chunker import Chunk
-from app.ingestion.store import VectorStore
+from app.ingestion.store import RetrievalHit, VectorStore
 from app.ingestion.synthetic import GeneratorConfig, generate
 from app.ratios.five_c import Dimension, FiveCAssessment, Rating
 
@@ -40,6 +41,43 @@ class FakeVectorStore(VectorStore):
     def upsert_chunks(self, chunks: list[Chunk]) -> int:  # type: ignore[override]
         self.upserted.extend(chunks)
         return len(chunks)
+
+    @property
+    def embedding_space(self) -> str:
+        return "test-lexical-v1"
+
+    def semantic_search(
+        self,
+        query,
+        *,
+        application_id=None,
+        document_kinds=None,
+        limit=5,
+        score_threshold=None,
+        **kwargs,
+    ):
+        words = set(re.findall(r"[a-z]+", query.lower()))
+        hits = []
+        for chunk in self.upserted:
+            if chunk.source_metadata.get("application_id") != application_id:
+                continue
+            if document_kinds and chunk.source_metadata.get("document_kind") not in document_kinds:
+                continue
+            score = len(words & set(re.findall(r"[a-z]+", chunk.text.lower()))) / max(len(words), 1)
+            if score < (score_threshold or 0):
+                continue
+            hits.append(
+                RetrievalHit(
+                    chunk.chunk_id,
+                    chunk.document_id,
+                    chunk.kind,
+                    chunk.text,
+                    chunk.page,
+                    score,
+                    chunk.source_metadata,
+                )
+            )
+        return sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit]
 
 
 class FakeLLM:
@@ -119,13 +157,21 @@ class FakeLLM:
         return "fake-doc:summary:0"
 
 
+class UnavailableLLM:
+    def generate_text(self, prompt: str) -> str:
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    def generate_structured(self, prompt: str, schema: type[T]) -> T:
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+
 def _compile(store: VectorStore, llm) -> object:
     graph: StateGraph = StateGraph(AgentState)
     graph.add_node("parse", parse_node)
     graph.add_node("extract", functools.partial(extract_node, store=store))
     graph.add_node("validate", validate_node)
     graph.add_node("ratios", ratios_node)
-    graph.add_node("assess_5c", functools.partial(assess_5c_node, llm=llm))
+    graph.add_node("assess_5c", functools.partial(assess_5c_node, llm=llm, store=store))
     graph.add_node("summarise", functools.partial(summarise_node, llm=llm))
     graph.add_edge(START, "parse")
     graph.add_edge("parse", "extract")
@@ -162,9 +208,7 @@ def test_full_graph_offline(tmp_path: Path) -> None:
     ]
 
     # validate: clean synthetic statement should produce no critical issues
-    assert all(
-        i["severity"] != "critical" for i in result.get("inconsistencies", [])
-    )
+    assert all(i["severity"] != "critical" for i in result.get("inconsistencies", []))
 
     # ratios populated
     assert "bank_statement_metrics" in result["ratios"]
@@ -185,3 +229,29 @@ def test_full_graph_offline(tmp_path: Path) -> None:
     assert summary["cited_chunk_ids"], "Summary must cite at least one chunk_id"
     # No invalid-citation errors should have been raised
     assert all(e.node != "summarise" for e in result["errors"])
+
+
+def test_full_graph_completes_with_deterministic_fallback(tmp_path: Path) -> None:
+    pdf, _ = generate(GeneratorConfig(seed=42, n_transactions=6), tmp_path)
+    graph = _compile(FakeVectorStore(), UnavailableLLM())
+
+    result = graph.invoke(
+        {
+            "application_id": "fallback-app",
+            "pdf_paths": [str(pdf)],
+            "trace": [],
+            "errors": [],
+        }
+    )
+
+    assert [step.node for step in result["trace"]] == [
+        "parse",
+        "extract",
+        "validate",
+        "ratios",
+        "assess_5c",
+        "summarise",
+    ]
+    assert result["five_c"]["collateral"]["rating"] == "insufficient_data"
+    assert json.loads(result["risk_summary"])["headline"]
+    assert {error.node for error in result["errors"]} == {"assess_5c", "summarise"}

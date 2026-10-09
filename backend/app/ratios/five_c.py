@@ -31,9 +31,7 @@ class Rating(str, Enum):
 class Dimension(BaseModel):
     name: str = Field(description="Character | Capacity | Capital | Collateral | Conditions")
     rating: Rating
-    reasoning: str = Field(
-        description="2-3 sentences explaining the rating in plain English"
-    )
+    reasoning: str = Field(description="2-3 sentences explaining the rating in plain English")
     evidence_chunk_ids: list[str] = Field(
         default_factory=list,
         description="chunk_ids from the ingested documents supporting this rating",
@@ -58,20 +56,26 @@ _DIMENSION_GUIDANCE: dict[str, str] = {
         "of tax/EPF/SOCSO outflows as proxies for business discipline."
     ),
     "Capacity": (
-        "Use avg_daily_inflow, net_change, and largest_credit to judge whether "
-        "current cash flow can service additional debt."
+        "Describe observed inflows and outflows, but do not treat account credits "
+        "as profit or infer repayment ability without debt obligations. Missing "
+        "documents or limited coverage alone never justify a weak rating. "
+        "Use insufficient_data when repayment evidence is incomplete. Audited cash from "
+        "operations, EBIT and interest coverage are relevant partial evidence even without "
+        "bank statements. Acknowledge these facts rather than claiming no evidence exists."
     ),
     "Capital": (
         "If audited financials are present, use Debt-to-Equity and Total Equity to "
         "judge the capital cushion. Otherwise rate as INSUFFICIENT_DATA."
     ),
     "Collateral": (
-        "Bank statements do not disclose collateral. Rate INSUFFICIENT_DATA and "
-        "flag the missing CTOS / asset schedule for human follow-up."
+        "Inspect retrieved facility/security evidence for collateral disclosures. "
+        "Bank statements alone cannot establish collateral. If insufficient, rate "
+        "INSUFFICIENT_DATA and request the relevant security or asset documents."
     ),
     "Conditions": (
-        "Comment only on what's visible in the statement: counterparty mix, "
-        "industry signals from descriptions (e.g. PEPPOL, LHDN tax, supplier names)."
+        "Use retrieved management accounts and supporting evidence for documented "
+        "operating risks. Keep forecasts separate from historical actuals; do not "
+        "infer market stability from regular banking transactions alone."
     ),
 }
 
@@ -81,6 +85,9 @@ def build_prompt(
     inconsistencies: list[Inconsistency],
     *,
     financial_ratios: list[FinancialRatios] | None = None,
+    allowed_chunk_ids: list[str] | None = None,
+    package_evidence: str = "",
+    retrieved_evidence: str = "",
 ) -> str:
     """Compose a single prompt for all 5 dimensions.
 
@@ -89,41 +96,72 @@ def build_prompt(
     from chunks.
     """
     financial_ratios = financial_ratios or []
-    metrics_block = "\n".join(
-        f"- {m.document_id}: period_days={m.period_days}, "
-        f"transactions={m.transaction_count}, "
-        f"net_change=RM{m.net_change}, "
-        f"avg_daily_inflow=RM{m.avg_daily_inflow}, "
-        f"avg_daily_outflow=RM{m.avg_daily_outflow}, "
-        f"deposit_count={m.deposit_count}, withdrawal_count={m.withdrawal_count}, "
-        f"closing_balance=RM{m.end_of_period_balance}, "
-        f"balance_volatility=RM{m.balance_volatility}"
-        for m in metrics
-    ) or "- (no metrics)"
-
-    ratios_block = "\n".join(
+    allowed_chunk_ids = allowed_chunk_ids or []
+    prompt_metrics = _representative_metrics(metrics)
+    metrics_block = (
         "\n".join(
-            [
-                f"- {r.document_id} (FY end {r.period_end}):",
-                f"    Current Ratio: {r.current_ratio.value} [{r.current_ratio.band.value}]",
-                f"    Debt-to-Equity: {r.debt_to_equity.value} [{r.debt_to_equity.band.value}]",
-                f"    Net Profit Margin: {r.net_profit_margin.value} [{r.net_profit_margin.band.value}]",
-                f"    Interest Coverage: {r.interest_coverage.value} [{r.interest_coverage.band.value}]",
-                f"    DSR (est.): {r.dsr.value} [{r.dsr.band.value}]",
-            ]
+            f"- {m.document_id} (source_chunk_id={m.document_id}:summary:0): "
+            f"days={m.period_days}, txns={m.transaction_count}, "
+            f"credits=RM{m.total_credits}, debits=RM{m.total_debits}, "
+            f"net=RM{m.net_change}, reconciliation_diff="
+            f"RM{m.net_change - (m.total_credits - m.total_debits)}, "
+            f"daily_inflow=RM{m.avg_daily_inflow}, closing=RM{m.end_of_period_balance}"
+            for m in prompt_metrics
         )
-        for r in financial_ratios
-    ) or "- (no audited financial ratios — Capital/Capacity assessment is limited)"
+        or "- (no metrics)"
+    )
+    if len(prompt_metrics) < len(metrics):
+        metrics_block += (
+            f"\n- ({len(metrics) - len(prompt_metrics)} additional statements omitted from "
+            "the prompt; use package cash-flow aggregates for package-level claims)"
+        )
 
-    inconsistencies_block = "\n".join(
-        f"- [{i.severity.value.upper()}] {i.code}: {i.message} "
-        f"(citations: {', '.join(i.citations) or '—'})"
-        for i in inconsistencies
-    ) or "- (none detected)"
+    ratios_block = (
+        "\n".join(
+            "\n".join(
+                [
+                    f"- {r.document_id} (FY end {r.period_end}; "
+                    f"source_chunk_id={r.document_id}:period:0):",
+                    f"    Current Ratio: {r.current_ratio.value} [{r.current_ratio.band.value}]",
+                    f"    Debt-to-Equity: {r.debt_to_equity.value} [{r.debt_to_equity.band.value}]",
+                    f"    Net Profit Margin: {r.net_profit_margin.value} [{r.net_profit_margin.band.value}]",
+                    f"    Interest Coverage: {r.interest_coverage.value} [{r.interest_coverage.band.value}]",
+                    f"    DSR: {r.dsr.value} [{r.dsr.band.value}] (unavailable without verified repayments)",
+                    "    Key inputs (RM): "
+                    + ", ".join(
+                        f"{name}={r.inputs.get(name)}"
+                        for name in (
+                            "current_assets",
+                            "current_liabilities",
+                            "non_current_liabilities",
+                            "total_equity",
+                            "revenue",
+                            "net_profit",
+                            "ebit",
+                            "interest_expense",
+                            "cash_from_operations",
+                        )
+                    ),
+                ]
+            )
+            for r in financial_ratios
+        )
+        or "- (no audited financial ratios — Capital/Capacity assessment is limited)"
+    )
+
+    inconsistencies_block = (
+        "\n".join(
+            f"- [{i.severity.value.upper()}] {i.code}: {i.message} "
+            f"(citations: {', '.join(i.citations) or '—'})"
+            for i in inconsistencies
+        )
+        or "- (none detected)"
+    )
 
     guidance_block = "\n".join(
         f"- {name}: {guidance}" for name, guidance in _DIMENSION_GUIDANCE.items()
     )
+    allowed_block = ", ".join(allowed_chunk_ids) or "(none)"
 
     return f"""You are assisting a Malaysian loan officer assess an SME credit application.
 Produce a 5C assessment (Character, Capacity, Capital, Collateral, Conditions).
@@ -135,6 +173,11 @@ You MUST:
    support the dimension (especially Capital and Collateral — those need audited
    financials and asset schedules respectively).
 4. Never assert a credit decision. You provide assessment input only.
+5. Use only exact chunk_ids from the allowed list. Do not create metric names,
+   ratio names, document ids, or other synthetic identifiers as citations.
+
+Allowed chunk_ids:
+{allowed_block}
 
 Per-dimension guidance:
 {guidance_block}
@@ -148,4 +191,23 @@ Evidence — financial ratios from audited statements:
 Evidence — validation findings:
 {inconsistencies_block}
 
+Evidence — package totals, coverage and document identity:
+{package_evidence}
+
+{retrieved_evidence}
+
+Use the provided package totals for package-level claims. Address all material
+validation findings, including missing documents, missing months and duplicate
+uploads. A package-level absence check comes from the inventory, not a PDF page;
+do not invent a document citation for missing evidence.
+
 Return a FiveCAssessment object."""
+
+
+def _representative_metrics(
+    metrics: list[BankStatementMetrics], limit: int = 5
+) -> list[BankStatementMetrics]:
+    if len(metrics) <= limit:
+        return metrics
+    indexes = {round(position * (len(metrics) - 1) / (limit - 1)) for position in range(limit)}
+    return [metric for index, metric in enumerate(metrics) if index in indexes]

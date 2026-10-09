@@ -44,7 +44,7 @@ def _compile(store: VectorStore):
 
 
 def test_graph_runs_parse_then_extract(tmp_path: Path) -> None:
-    pdf, _ = generate(GeneratorConfig(seed=1, n_transactions=4), tmp_path)
+    pdf, _ = generate(GeneratorConfig(seed=1, n_transactions=4, num_months=1), tmp_path)
     store = FakeVectorStore()
     graph = _compile(store)
 

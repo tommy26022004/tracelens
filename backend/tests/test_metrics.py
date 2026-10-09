@@ -41,7 +41,7 @@ def test_metrics_basic_arithmetic() -> None:
     )
     m = compute_metrics(stmt, document_id="doc-1")
     assert m.document_id == "doc-1"
-    assert m.period_days == 30
+    assert m.period_days == 31
     assert m.transaction_count == 2
     assert m.net_change == Decimal("50.00")
     assert m.deposit_count == 1

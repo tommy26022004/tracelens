@@ -45,7 +45,9 @@ def _quantise(value: Decimal) -> Decimal:
 
 
 def compute_metrics(stmt: BankStatement, document_id: str) -> BankStatementMetrics:
-    period_days = max((stmt.statement_period_end - stmt.statement_period_start).days, 1)
+    period_days = (stmt.statement_period_end - stmt.statement_period_start).days + 1
+    if period_days < 1:
+        raise ValueError("Statement end date precedes its start date")
     credits = [t.credit for t in stmt.transactions if t.credit is not None]
     debits = [t.debit for t in stmt.transactions if t.debit is not None]
     balances = [float(t.balance) for t in stmt.transactions]

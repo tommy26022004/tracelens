@@ -73,7 +73,13 @@ class AgentState(TypedDict, total=False):
     # Step 1 — parsing/ingestion
     document_ids: list[str]
     document_kinds: dict[str, DocumentKind]  # document_id -> detected kind
+    document_hashes: dict[str, str]
+    document_paths: dict[str, str]
+    document_filenames: dict[str, str]
+    original_filenames: dict[str, str]
+    citation_sources: dict[str, dict[str, Any]]
     needs_ocr_pages: dict[str, list[int]]  # document_id -> page numbers
+    document_parse_failures: dict[str, str]  # document_id -> user-facing failure
     parsed_pages: dict[str, Any]  # document_id -> list[ParsedPage] (internal handoff)
 
     # Step 2 — structured extraction (one slot per document type)
@@ -81,6 +87,8 @@ class AgentState(TypedDict, total=False):
     ssm_registrations: list[SSMRegistration]
     audited_financials: list[AuditedFinancials]
     tax_returns: list[TaxReturn]
+    extracted_document_ids: dict[str, list[str]]
+    package_inventory: dict[str, Any]
 
     # Step 3 — cross-document validation (Phase 3b)
     inconsistencies: list[dict[str, Any]]
@@ -90,6 +98,7 @@ class AgentState(TypedDict, total=False):
 
     # Step 5 — 5C assessment (Phase 3d)
     five_c: dict[str, Any]
+    retrieval: dict[str, Any]
 
     # Step 6 — explainable summary (Phase 3e)
     risk_summary: str | None

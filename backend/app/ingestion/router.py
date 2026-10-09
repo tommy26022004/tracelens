@@ -44,4 +44,11 @@ def detect_document_kind(pages: list[ParsedPage]) -> DocumentKind:
         return DocumentKind.AUDITED_FINANCIALS
     if _looks_like_bank_statement(pages):
         return DocumentKind.BANK_STATEMENT
+    first_page = pages[0].text.upper() if pages else ""
+    if "MANAGEMENT ACCOUNTS" in first_page:
+        return DocumentKind.MANAGEMENT_ACCOUNTS
+    if "CASH FLOW FORECAST" in first_page:
+        return DocumentKind.CASH_FLOW_FORECAST
+    if "FACILITY STATEMENT" in first_page:
+        return DocumentKind.FACILITY_STATEMENT
     return DocumentKind.UNKNOWN

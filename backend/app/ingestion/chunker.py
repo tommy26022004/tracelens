@@ -17,9 +17,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.ingestion.parser import ParsedPage
 from app.ingestion.types import (
     AuditedFinancials,
     BankStatement,
+    SourceLocation,
     SSMRegistration,
     TaxReturn,
     Transaction,
@@ -33,8 +35,20 @@ class Chunk(BaseModel):
     document_id: str
     kind: str  # "summary" | "transaction"
     text: str
-    page: int
+    page: int | None
     source_metadata: dict[str, Any]
+
+
+def _attach_sources(chunk: Chunk, fields: dict[str, SourceLocation]) -> Chunk:
+    locations = [
+        {"field": field, **location.model_dump(mode="json")} for field, location in fields.items()
+    ]
+    pages = sorted({location.page for location in fields.values()})
+    chunk.page = pages[0] if pages else None
+    chunk.source_metadata.update(
+        source_pages=pages, source_locations=locations, source_verified=bool(locations)
+    )
+    return chunk
 
 
 def _summary_text(stmt: BankStatement) -> str:
@@ -103,6 +117,20 @@ def chunk_bank_statement(stmt: BankStatement, document_id: str) -> list[Chunk]:
             )
         )
 
+    _attach_sources(
+        chunks[0],
+        {
+            **stmt.source_fields,
+            **{
+                f"transaction_{index}": transaction.source
+                for index, transaction in enumerate(stmt.transactions)
+                if transaction.source is not None
+            },
+        },
+    )
+    for chunk, transaction in zip(chunks[1:], stmt.transactions, strict=True):
+        if transaction.source is not None:
+            _attach_sources(chunk, {"transaction": transaction.source})
     return chunks
 
 
@@ -164,6 +192,9 @@ def chunk_ssm_registration(ssm: SSMRegistration, document_id: str) -> list[Chunk
             )
         )
 
+    _attach_sources(chunks[0], ssm.source_fields)
+    for chunk, director in zip(chunks[1:], ssm.directors, strict=True):
+        _attach_sources(chunk, {"director": director.source} if director.source else {})
     return chunks
 
 
@@ -173,6 +204,8 @@ def _financials_summary_text(fin: AuditedFinancials) -> str:
         f"Audited financials summary. "
         f"Company: {fin.company_name}. Auditor: {fin.auditor}. "
         f"FY end: {fin.financial_year_end.isoformat()}. "
+        f"Source display unit: {fin.display_unit}; values normalized to "
+        f"{fin.canonical_unit} using multiplier {fin.unit_multiplier}. "
         f"Revenue (current): RM {current.revenue}. "
         f"Net profit (current): RM {current.net_profit}. "
         f"Total equity: RM {current.total_equity}. "
@@ -205,6 +238,9 @@ def chunk_audited_financials(fin: AuditedFinancials, document_id: str) -> list[C
                 "auditor": fin.auditor,
                 "financial_year_end": fin.financial_year_end.isoformat(),
                 "period_count": len(fin.periods),
+                "source_display_unit": fin.display_unit,
+                "canonical_unit": fin.canonical_unit,
+                "unit_multiplier": str(fin.unit_multiplier),
             },
         )
     ]
@@ -218,6 +254,9 @@ def chunk_audited_financials(fin: AuditedFinancials, document_id: str) -> list[C
                 page=1 if idx == 0 else 2,
                 source_metadata={
                     "period_end": period.period_end.isoformat(),
+                    "source_display_unit": fin.display_unit,
+                    "canonical_unit": fin.canonical_unit,
+                    "unit_multiplier": str(fin.unit_multiplier),
                     "revenue": str(period.revenue),
                     "net_profit": str(period.net_profit),
                     "ebit": str(period.ebit),
@@ -230,6 +269,9 @@ def chunk_audited_financials(fin: AuditedFinancials, document_id: str) -> list[C
                 },
             )
         )
+    _attach_sources(chunks[0], {**fin.source_fields, **fin.periods[0].source_fields})
+    for chunk, period in zip(chunks[1:], fin.periods, strict=True):
+        _attach_sources(chunk, period.source_fields)
     return chunks
 
 
@@ -246,19 +288,38 @@ def _tax_summary_text(tax: TaxReturn) -> str:
 
 def chunk_tax_return(tax: TaxReturn, document_id: str) -> list[Chunk]:
     return [
-        Chunk(
-            chunk_id=f"{document_id}:summary:0",
-            document_id=document_id,
-            kind="summary",
-            text=_tax_summary_text(tax),
-            page=1,
-            source_metadata={
-                "company_name": tax.company_name,
-                "tax_reference_number": tax.tax_reference_number,
-                "year_of_assessment": tax.year_of_assessment,
-                "gross_business_income": str(tax.gross_business_income),
-                "chargeable_income": str(tax.chargeable_income),
-                "tax_payable": str(tax.tax_payable),
-            },
+        _attach_sources(
+            Chunk(
+                chunk_id=f"{document_id}:summary:0",
+                document_id=document_id,
+                kind="summary",
+                text=_tax_summary_text(tax),
+                page=1,
+                source_metadata={
+                    "company_name": tax.company_name,
+                    "tax_reference_number": tax.tax_reference_number,
+                    "year_of_assessment": tax.year_of_assessment,
+                    "gross_business_income": str(tax.gross_business_income),
+                    "chargeable_income": str(tax.chargeable_income),
+                    "tax_payable": str(tax.tax_payable),
+                },
+            ),
+            tax.source_fields,
         )
+    ]
+
+
+def chunk_unstructured_pages(
+    pages: list[ParsedPage], document_id: str, document_kind: str
+) -> list[Chunk]:
+    return [
+        Chunk(
+            chunk_id=f"{document_id}:page:{page.page - 1}",
+            document_id=document_id,
+            kind="page",
+            text=page.text,
+            page=page.page,
+            source_metadata={"document_kind": document_kind, "page": page.page},
+        )
+        for page in pages
     ]

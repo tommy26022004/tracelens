@@ -20,6 +20,9 @@ class DocumentKind(str, Enum):
     SSM_REGISTRATION = "ssm_registration"
     AUDITED_FINANCIALS = "audited_financials"
     TAX_RETURN = "tax_return"
+    MANAGEMENT_ACCOUNTS = "management_accounts"
+    CASH_FLOW_FORECAST = "cash_flow_forecast"
+    FACILITY_STATEMENT = "facility_statement"
     UNKNOWN = "unknown"
 
 
@@ -35,15 +38,23 @@ __all__ = [
 ]
 
 
+class SourceLocation(BaseModel):
+    page: int = Field(ge=1)
+    text: str
+    bbox: tuple[float, float, float, float]
+
+
 class Transaction(BaseModel):
     """One row from a bank statement."""
 
     txn_date: date
     description: str
+    reference_no: str | None = None
     debit: Decimal | None = None
     credit: Decimal | None = None
     balance: Decimal
     page: int = Field(description="1-indexed source page for citation traceability")
+    source: SourceLocation | None = None
 
 
 class BankStatement(BaseModel):
@@ -59,6 +70,7 @@ class BankStatement(BaseModel):
     total_credits: Decimal
     total_debits: Decimal
     transactions: list[Transaction]
+    source_fields: dict[str, SourceLocation] = Field(default_factory=dict)
 
     @property
     def deposit_count(self) -> int:
@@ -88,6 +100,7 @@ class FinancialPeriod(BaseModel):
     total_equity: Decimal
     # Cash flow
     cash_from_operations: Decimal
+    source_fields: dict[str, SourceLocation] = Field(default_factory=dict)
 
     @property
     def total_assets(self) -> Decimal:
@@ -109,10 +122,12 @@ class AuditedFinancials(BaseModel):
     company_name: str
     auditor: str
     financial_year_end: date
-    periods: list[FinancialPeriod] = Field(
-        description="Most recent period first, then comparative"
-    )
+    periods: list[FinancialPeriod] = Field(description="Most recent period first, then comparative")
+    display_unit: str = "RM"
+    canonical_unit: str = "RM"
+    unit_multiplier: Decimal = Decimal("1")
     page_count: int = 1
+    source_fields: dict[str, SourceLocation] = Field(default_factory=dict)
 
 
 class TaxReturn(BaseModel):
@@ -130,6 +145,7 @@ class TaxReturn(BaseModel):
     chargeable_income: Decimal
     tax_payable: Decimal
     page_count: int = 1
+    source_fields: dict[str, SourceLocation] = Field(default_factory=dict)
 
 
 class Director(BaseModel):
@@ -138,6 +154,7 @@ class Director(BaseModel):
     name: str
     nric_or_passport: str | None = None
     role: str | None = None
+    source: SourceLocation | None = None
 
 
 class SSMRegistration(BaseModel):
@@ -151,10 +168,9 @@ class SSMRegistration(BaseModel):
     company_name: str
     registration_number: str
     incorporation_date: date
-    company_type: str = Field(
-        description="e.g. SDN BHD, BERHAD, ENTERPRISE, PARTNERSHIP"
-    )
+    company_type: str = Field(description="e.g. SDN BHD, BERHAD, ENTERPRISE, PARTNERSHIP")
     business_address: str
     paid_up_capital: Decimal
     directors: list[Director]
     page_count: int = 1
+    source_fields: dict[str, SourceLocation] = Field(default_factory=dict)

@@ -63,17 +63,66 @@ export interface BankStatementMetrics {
 	balance_volatility: string;
 }
 
+export interface InventoryDocument {
+	document_id: string;
+	kind: string;
+	page_count: number;
+	extraction_status: string;
+	duplicate_of: string | null;
+}
+
+export interface PackageInventory {
+	documents: InventoryDocument[];
+	total_documents: number;
+	total_pages: number;
+	extracted_documents: number;
+	failed_documents: number;
+	documents_by_kind: Record<string, number>;
+	bank_coverage_by_account: Record<string, string[]>;
+	missing_bank_months: string[];
+	financial_years: number[];
+	missing_core_kinds: string[];
+	duplicate_document_ids: string[];
+	complete: boolean;
+}
+
 export interface AnalysisResponse {
+    tax_returns?: { company_name: string; tax_reference_number: string; year_of_assessment: number; gross_business_income: string; chargeable_income: string; tax_payable: string; chunk_id: string }[];
+    retrieval?: RetrievalBundle;
+    citation_sources?: Record<string, CitationReference>;
 	application_id: string;
 	document_ids: string[];
 	document_kinds: Record<string, string>;
 	needs_ocr_pages: Record<string, number[]>;
 	inconsistencies: Inconsistency[];
-	ratios: { bank_statement_metrics?: BankStatementMetrics[] };
+	ratios: {
+		financial_ratios?: { document_id: string; period_end: string; source_display_unit?: string; canonical_unit?: string; unit_multiplier?: string; inputs?: Record<string, string>; current_ratio: FinancialRatio; debt_to_equity: FinancialRatio; net_profit_margin: FinancialRatio; interest_coverage: FinancialRatio; dsr: FinancialRatio }[];
+		bank_statement_metrics?: BankStatementMetrics[];
+		package_cash_flow?: Record<string, unknown>;
+		financial_trend?: Record<string, unknown>;
+	};
 	five_c: FiveC | Record<string, never>;
 	risk_summary: RiskSummary | null;
 	trace: TraceItem[];
 	errors: AgentErrorItem[];
+	package_inventory: PackageInventory | Record<string, never>;
+}
+
+export interface FinancialRatio {
+    name: string;
+    value: string | null;
+    band: string;
+    formula: string;
+    explanation: string;
+}
+
+export interface AnalysisJobResponse {
+	job_id: string;
+	status: 'queued' | 'processing' | 'completed' | 'failed';
+	progress: number;
+	phase: string;
+	result: AnalysisResponse | null;
+	error: string | null;
 }
 
 export interface ChunkDetail {
@@ -81,6 +130,53 @@ export interface ChunkDetail {
 	document_id: string;
 	kind: string;
 	text: string;
-	page: number;
-	source_metadata: Record<string, unknown>;
+    page: number | null;
+    source_metadata: Record<string, unknown>;
+    filename: string;
+    source_pages: number[];
+    source_locations: SourceLocation[];
+    pdf_url: string | null;
+    preview_url: string | null;
+}
+
+export interface CitationReference {
+    document_id: string;
+    filename: string;
+    pages: number[];
+}
+
+export interface SourceLocation {
+    field: string;
+    page: number;
+    text: string;
+    bbox: number[];
+}
+
+export interface RetrievedEvidence {
+	chunk_id: string;
+	document_id: string;
+	document_kind: string;
+	filename: string;
+	pages: number[];
+	score: number;
+	text: string;
+	truncated: boolean;
+	evidence_type: string;
+}
+
+export interface RetrievalBundle {
+	application_id: string;
+	embedding_space: string;
+	status: string;
+	consumed_by: string[];
+	warnings: string[];
+	evidence: RetrievedEvidence[];
+	queries: {
+		topic: string;
+		query: string;
+		document_kinds: string[];
+		status: string;
+		selected_chunk_ids: string[];
+		rejected_hits: number;
+	}[];
 }

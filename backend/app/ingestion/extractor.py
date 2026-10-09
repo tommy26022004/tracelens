@@ -19,13 +19,12 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from app.ingestion.parser import ParsedPage, TextSpan
+from app.ingestion.provenance import labelled_sources, source_location
 from app.ingestion.types import BankStatement, Transaction
 
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 MONEY_RE = re.compile(r"^-?\d{1,3}(?:,\d{3})*\.\d{2}$")
-PERIOD_RE = re.compile(
-    r"Statement Period:\s*(\d{2} \w{3} \d{4})\s*-\s*(\d{2} \w{3} \d{4})"
-)
+PERIOD_RE = re.compile(r"Statement Period\s*:?\s*(\d{2} \w{3} \d{4})\s*-\s*(\d{2} \w{3} \d{4})")
 ROW_TOLERANCE: float = 3.0  # spans within this many points share a row
 
 
@@ -57,7 +56,7 @@ def _find_label(rows: list[list[TextSpan]], prefix: str) -> str | None:
     for row in rows:
         text = " ".join(s.text for s in row)
         if text.startswith(prefix):
-            return text[len(prefix):].lstrip(" :").strip()
+            return text[len(prefix) :].lstrip(" :").strip()
     return None
 
 
@@ -84,7 +83,10 @@ def _parse_transaction_row(row: list[TextSpan], page: int) -> Transaction:
     date_span = row[0]
     money_spans = [s for s in row[1:] if MONEY_RE.match(s.text)]
     text_spans = [s for s in row[1:] if not MONEY_RE.match(s.text)]
-    description = " ".join(s.text for s in text_spans).strip()
+    description_spans = [s for s in text_spans if s.bbox[0] < 265]
+    reference_spans = [s for s in text_spans if s.bbox[0] >= 265]
+    description = " ".join(s.text for s in description_spans).strip()
+    reference_no = " ".join(s.text for s in reference_spans).strip() or None
 
     # Balance is always the right-most money span.
     if not money_spans:
@@ -98,7 +100,7 @@ def _parse_transaction_row(row: list[TextSpan], page: int) -> Transaction:
     # generator (debit ≈ x=345, credit ≈ x=425).
     for span in money_spans[:-1]:
         x_mid = (span.bbox[0] + span.bbox[2]) / 2
-        if x_mid < 400:
+        if x_mid < 440:
             debit = _to_decimal(span.text)
         else:
             credit = _to_decimal(span.text)
@@ -106,10 +108,12 @@ def _parse_transaction_row(row: list[TextSpan], page: int) -> Transaction:
     return Transaction(
         txn_date=_parse_date_cell(date_span.text),
         description=description,
+        reference_no=reference_no,
         debit=debit,
         credit=credit,
         balance=balance,
         page=page,
+        source=source_location(row),
     )
 
 
@@ -125,7 +129,9 @@ def extract_bank_statement(pages: list[ParsedPage]) -> BankStatement:
 
     first_rows = _group_into_rows(pages[0].spans)
     bank_name_row = first_rows[0] if first_rows else []
-    bank_name = " ".join(s.text for s in bank_name_row).strip()
+    bank_name = (
+        _find_label(first_rows, "Bank Name") or " ".join(s.text for s in bank_name_row).strip()
+    )
 
     holder = _find_label(first_rows, "Account Holder")
     account_number = _find_label(first_rows, "Account Number")
@@ -174,6 +180,27 @@ def extract_bank_statement(pages: list[ParsedPage]) -> BankStatement:
         total_credits=total_credits,  # type: ignore[arg-type]
         total_debits=total_debits,  # type: ignore[arg-type]
         transactions=transactions,
+        source_fields={
+            "bank_name": source_location(bank_name_row),
+            **labelled_sources(
+                first_rows,
+                {
+                    "Bank Name": "bank_name",
+                    "Account Holder": "account_holder",
+                    "Account Number": "account_number",
+                    "Statement Period": "statement_period",
+                },
+            ),
+            **labelled_sources(
+                last_rows,
+                {
+                    "Opening Balance": "opening_balance",
+                    "Closing Balance": "closing_balance",
+                    "Total Credits": "total_credits",
+                    "Total Debits": "total_debits",
+                },
+            ),
+        },
     )
 
 

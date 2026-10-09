@@ -16,6 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.ingestion.parser import ParsedPage, TextSpan
+from app.ingestion.provenance import labelled_sources, source_location
 from app.ingestion.types import Director, SSMRegistration
 
 LABEL_TO_FIELD: dict[str, str] = {
@@ -27,9 +28,7 @@ LABEL_TO_FIELD: dict[str, str] = {
     "Paid-Up Capital": "paid_up_capital",
 }
 
-DIRECTOR_LINE_RE = re.compile(
-    r"^\d+\.\s+(.+?)\s+-\s+NRIC:\s*(\S+)\s+-\s+Role:\s*(.+)$"
-)
+DIRECTOR_LINE_RE = re.compile(r"^\d+\.\s+(.+?)\s+-\s+NRIC:\s*(\S+)\s+-\s+Role:\s*(.+)$")
 MONEY_RE = re.compile(r"RM\s*([\d,]+\.\d{2})")
 ROW_TOLERANCE = 3.0
 
@@ -51,7 +50,7 @@ def _find_value(rows: list[list[TextSpan]], label: str) -> str | None:
     for row in rows:
         line_text = " ".join(s.text for s in row)
         if line_text.startswith(target):
-            return line_text[len(target):].strip()
+            return line_text[len(target) :].strip()
     return None
 
 
@@ -81,7 +80,12 @@ def _extract_directors(rows: list[list[TextSpan]]) -> list[Director]:
         if match:
             name, nric, role = match.groups()
             directors.append(
-                Director(name=name.strip(), nric_or_passport=nric.strip(), role=role.strip())
+                Director(
+                    name=name.strip(),
+                    nric_or_passport=nric.strip(),
+                    role=role.strip(),
+                    source=source_location(row),
+                )
             )
     return directors
 
@@ -118,6 +122,9 @@ def extract_ssm_registration(pages: list[ParsedPage]) -> SSMRegistration:
         paid_up_capital=_parse_money(str(fields["paid_up_capital"])),
         directors=directors,
         page_count=len(pages),
+        source_fields=labelled_sources(
+            rows, {f"{label}:": field for label, field in LABEL_TO_FIELD.items()}
+        ),
     )
 
 

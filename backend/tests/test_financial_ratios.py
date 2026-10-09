@@ -50,7 +50,8 @@ def test_healthy_company_all_bands() -> None:
     assert r.debt_to_equity.band is RatioBand.HEALTHY
     assert r.net_profit_margin.band is RatioBand.HEALTHY
     assert r.interest_coverage.band is RatioBand.HEALTHY
-    assert r.dsr.band in (RatioBand.HEALTHY, RatioBand.ACCEPTABLE)
+    assert r.dsr.band is RatioBand.INSUFFICIENT_DATA
+    assert r.dsr.value is None
 
 
 def test_distressed_company_flags_all_bands() -> None:
@@ -69,7 +70,8 @@ def test_distressed_company_flags_all_bands() -> None:
     assert r.interest_coverage.band is RatioBand.DISTRESSED
     assert r.current_ratio.band is RatioBand.DISTRESSED
     assert r.debt_to_equity.band is RatioBand.DISTRESSED
-    assert r.dsr.band is RatioBand.DISTRESSED
+    assert r.dsr.band is RatioBand.INSUFFICIENT_DATA
+    assert r.dsr.value is None
 
 
 def test_zero_interest_means_coverage_healthy() -> None:

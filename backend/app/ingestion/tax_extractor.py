@@ -10,6 +10,7 @@ import re
 from decimal import Decimal
 
 from app.ingestion.parser import ParsedPage, TextSpan
+from app.ingestion.provenance import labelled_sources
 from app.ingestion.types import TaxReturn
 
 ROW_TOLERANCE = 3.0
@@ -32,7 +33,7 @@ def _find_value(rows: list[list[TextSpan]], label: str) -> str | None:
     for row in rows:
         text = " ".join(s.text for s in row)
         if text.startswith(target):
-            return text[len(target):].strip()
+            return text[len(target) :].strip()
     return None
 
 
@@ -69,6 +70,17 @@ def extract_tax_return(pages: list[ParsedPage]) -> TaxReturn:
         chargeable_income=_parse_money(str(chargeable)),
         tax_payable=_parse_money(str(payable)),
         page_count=len(pages),
+        source_fields=labelled_sources(
+            rows,
+            {
+                "Company Name:": "company_name",
+                "Tax Reference Number:": "tax_reference_number",
+                "Year of Assessment:": "year_of_assessment",
+                "Gross Business Income:": "gross_business_income",
+                "Chargeable Income:": "chargeable_income",
+                "Tax Payable:": "tax_payable",
+            },
+        ),
     )
 
 

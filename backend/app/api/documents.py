@@ -41,13 +41,16 @@ async def ingest(file: UploadFile = File(...)) -> IngestionResult:
 @router.get("/search")
 async def search(
     q: str = Query(..., min_length=1),
+    application_id: str = Query(..., min_length=1),
     document_id: str | None = None,
-    kind: str | None = Query(None, pattern="^(summary|transaction)$"),
+    kind: str | None = Query(None, pattern="^(summary|transaction|period|director|page)$"),
     limit: int = Query(5, ge=1, le=25),
 ) -> dict[str, list[dict[str, object]]]:
     """Semantic search over ingested chunks. Used by the agent in Phase 3."""
     store = VectorStore()
-    hits = store.semantic_search(q, limit=limit, document_id=document_id, kind=kind)
+    hits = store.semantic_search(
+        q, application_id=application_id, limit=limit, document_id=document_id, kind=kind
+    )
     return {
         "hits": [
             {

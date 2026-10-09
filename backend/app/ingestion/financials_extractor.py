@@ -25,6 +25,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.ingestion.parser import ParsedPage, TextSpan
+from app.ingestion.provenance import labelled_sources, source_location
 from app.ingestion.types import AuditedFinancials, FinancialPeriod
 
 ROW_TOLERANCE = 3.0
@@ -37,9 +38,8 @@ HEADER_KEYWORDS = (
     "AUDITED",
     "FINANCIAL STATEMENTS",
 )
-FOR_YEAR_RE = re.compile(
-    r"For the financial year ended\s+(\d{1,2}\s+\w+\s+\d{4})"
-)
+FOR_YEAR_RE = re.compile(r"For the financial year ended\s+(\d{1,2}\s+\w+\s+\d{4})")
+RM_THOUSANDS_RE = re.compile(r"\bRM\s*(?:['\u2019]\s*000|THOUSANDS?)\b", re.IGNORECASE)
 
 ROW_LABELS: dict[str, str] = {
     "Revenue": "revenue",
@@ -92,6 +92,13 @@ def _find_two_money_tokens(line_text: str) -> tuple[Decimal, Decimal] | None:
     return _parse_money(matches[-2]), _parse_money(matches[-1])
 
 
+def _financial_unit(pages: list[ParsedPage]) -> tuple[str, Decimal]:
+    full_text = "\n".join(page.text for page in pages)
+    if RM_THOUSANDS_RE.search(full_text):
+        return "RM'000", Decimal("1000")
+    return "RM", Decimal("1")
+
+
 def _extract_company_and_year(pages: list[ParsedPage]) -> tuple[str, str]:
     """First-line company name and parsed financial year end."""
     if not pages:
@@ -99,7 +106,7 @@ def _extract_company_and_year(pages: list[ParsedPage]) -> tuple[str, str]:
     first_rows = _group_into_rows(pages[0].spans)
     if not first_rows:
         raise ValueError("First page is empty")
-    company_name = " ".join(s.text for s in first_rows[0]).strip()
+    company_name = first_rows[0][0].text.strip()
 
     for row in first_rows:
         text = " ".join(s.text for s in row)
@@ -124,6 +131,7 @@ def extract_audited_financials(pages: list[ParsedPage]) -> AuditedFinancials:
     company_name, year_str = _extract_company_and_year(pages)
     auditor = _extract_auditor(pages)
     fy_end = datetime.strptime(year_str, "%d %B %Y").date()
+    display_unit, unit_multiplier = _financial_unit(pages)
 
     rows: list[list[TextSpan]] = []
     for page in pages:
@@ -131,6 +139,7 @@ def extract_audited_financials(pages: list[ParsedPage]) -> AuditedFinancials:
 
     current_vals: dict[str, Decimal] = {}
     prior_vals: dict[str, Decimal] = {}
+    field_sources = {}
     seen_headers: set[str] = set()
 
     for row in rows:
@@ -141,11 +150,12 @@ def extract_audited_financials(pages: list[ParsedPage]) -> AuditedFinancials:
             seen_headers.add(upper)
             continue
         for label, field in ROW_LABELS.items():
-            if line.startswith(label):
+            if line.startswith(label) and field not in current_vals:
                 values = _find_two_money_tokens(line)
                 if values is None:
                     continue
                 current, prior = values
+                field_sources[field] = source_location(row)
                 if field in EXPENSE_FIELDS:
                     current_vals[field] = abs(current)
                     prior_vals[field] = abs(prior)
@@ -155,10 +165,18 @@ def extract_audited_financials(pages: list[ParsedPage]) -> AuditedFinancials:
                 break
 
     required_fields = {
-        "revenue", "cost_of_sales", "gross_profit", "operating_expenses",
-        "ebit", "interest_expense", "net_profit",
-        "current_assets", "non_current_assets",
-        "current_liabilities", "non_current_liabilities", "total_equity",
+        "revenue",
+        "cost_of_sales",
+        "gross_profit",
+        "operating_expenses",
+        "ebit",
+        "interest_expense",
+        "net_profit",
+        "current_assets",
+        "non_current_assets",
+        "current_liabilities",
+        "non_current_liabilities",
+        "total_equity",
         "cash_from_operations",
     }
     missing = required_fields - current_vals.keys()
@@ -168,16 +186,35 @@ def extract_audited_financials(pages: list[ParsedPage]) -> AuditedFinancials:
             "Document may not match the supported audited-financials layout."
         )
 
+    if unit_multiplier != 1:
+        current_vals = {name: value * unit_multiplier for name, value in current_vals.items()}
+        prior_vals = {name: value * unit_multiplier for name, value in prior_vals.items()}
+
     prior_year_end = fy_end.replace(year=fy_end.year - 1)
-    current_period = FinancialPeriod(period_end=fy_end, **current_vals)
-    prior_period = FinancialPeriod(period_end=prior_year_end, **prior_vals)
+    current_period = FinancialPeriod(period_end=fy_end, source_fields=field_sources, **current_vals)
+    prior_period = FinancialPeriod(
+        period_end=prior_year_end, source_fields=field_sources, **prior_vals
+    )
 
     return AuditedFinancials(
         company_name=company_name,
         auditor=auditor,
         financial_year_end=fy_end,
         periods=[current_period, prior_period],
+        display_unit=display_unit,
+        canonical_unit="RM",
+        unit_multiplier=unit_multiplier,
         page_count=len(pages),
+        source_fields={
+            "company_name": source_location(_group_into_rows(pages[0].spans)[0]),
+            **labelled_sources(
+                rows,
+                {
+                    "Audited by:": "auditor",
+                    "For the financial year ended": "financial_year_end",
+                },
+            ),
+        },
     )
 
 
