@@ -24,7 +24,7 @@
 		<div class="mx-auto flex max-w-7xl flex-wrap gap-2 px-4 py-3 sm:px-6">
 			<a href="/cases" aria-current={page.url.pathname === '/cases' ? 'page' : undefined} class="rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-100" class:bg-slate-100={page.url.pathname === '/cases'}>Company cases</a>
 			<a href="/" aria-current={page.url.pathname === '/' ? 'page' : undefined} class="rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-100" class:bg-slate-100={page.url.pathname === '/'}>Analysis workspace</a>
-			<a href="/history" aria-current={page.url.pathname === '/history' ? 'page' : undefined} class="rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-100" class:bg-slate-100={page.url.pathname === '/history'}>Development History</a>
+			<a href="/history" aria-current={page.url.pathname === '/history' ? 'page' : undefined} class="rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-100" class:bg-slate-100={page.url.pathname === '/history'}>Analysis History</a>
 		</div>
 	</nav>
 	<main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-10">

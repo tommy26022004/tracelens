@@ -12,7 +12,8 @@
         configuration?: Record<string, unknown>; application_id?: string;
         expected?: string; actual?: string; improvement?: string;
     };
-    const categories = ['all', 'analysis', 'test', 'bug', 'note'];
+    const isProduction = import.meta.env.PROD;
+    const categories = isProduction ? ['analysis'] : ['all', 'analysis', 'test', 'bug', 'note'];
     const labels: Record<string, string> = { all: 'All entries', analysis: 'Analysis runs', test: 'Test results', bug: 'Bugs & improvements', note: 'Development notes' };
     const statuses: Record<string, string[]> = { test: ['not_run', 'passed', 'failed'], bug: ['open', 'resolved'], note: ['recorded'] };
     let records: RecordItem[] = $state([]);
@@ -21,7 +22,7 @@
     let error = $state('');
     let notice = $state('');
     let saving = $state(false);
-    let filter = $state('all');
+    let filter = $state(isProduction ? 'analysis' : 'all');
     let search = $state('');
     let showForm = $state(false);
     let category = $state('test');
@@ -128,28 +129,30 @@
     onMount(() => { void load(); });
 </script>
 
-<svelte:head><title>Development History — TraceLens</title></svelte:head>
+<svelte:head><title>{isProduction ? 'Analysis History' : 'Development History'} — TraceLens</title></svelte:head>
 
 <div class="space-y-6">
     <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-            <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">Internal development workspace</p>
-            <h2 class="mt-2 text-2xl font-bold text-slate-900">Development History</h2>
-            <p class="mt-2 max-w-2xl text-sm text-slate-500">Track runs, tests, bugs and the decisions behind each improvement. No historical results are imported.</p>
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">{isProduction ? 'Saved analysis runs' : 'Internal development workspace'}</p>
+            <h2 class="mt-2 text-2xl font-bold text-slate-900">{isProduction ? 'Analysis History' : 'Development History'}</h2>
+            <p class="mt-2 max-w-2xl text-sm text-slate-500">{isProduction ? 'Review completed analyses and reopen their source-linked assessment dashboards.' : 'Track runs, tests, bugs and the decisions behind each improvement. No historical results are imported.'}</p>
         </div>
         <div class="flex gap-2">
             <button onclick={() => load()} disabled={loading} class="neo-button rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm disabled:opacity-50">Refresh</button>
-            <button onclick={() => showForm = !showForm} class="neo-button rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">{showForm ? 'Close form' : '+ Add entry'}</button>
+            {#if !isProduction}<button onclick={() => showForm = !showForm} class="neo-button rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">{showForm ? 'Close form' : '+ Add entry'}</button>{/if}
         </div>
     </div>
 
-    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        New analysis runs are saved automatically. Test results, bugs and notes are manually reported, not independently verified. A completed run is not a passed accuracy test. Use synthetic or authorised data; snapshots may contain financial information. This page is for trusted local use only.
-    </div>
+    {#if !isProduction}
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            New analysis runs are saved automatically. Test results, bugs and notes are manually reported, not independently verified. A completed run is not a passed accuracy test. Use synthetic or authorised data; snapshots may contain financial information. This page is for trusted local use only.
+        </div>
+    {/if}
     {#if error}<div role="alert" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>{/if}
     {#if notice}<p role="status" class="text-sm text-emerald-700">{notice}</p>{/if}
 
-    {#if showForm}
+    {#if showForm && !isProduction}
         <form onsubmit={save} class="space-y-4 neo-card rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 class="font-semibold">Record evidence, not assumptions</h3>
             <div class="grid gap-4 md:grid-cols-2">
@@ -188,7 +191,7 @@
     {:else if visible.length === 0 && !error}
         <div class="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
             <h3 class="text-lg font-semibold">{total === 0 ? 'Your history starts here' : 'No matching entries'}</h3>
-            <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">{total === 0 ? 'No runs, tests or bugs have been recorded yet. Start an analysis or add your first test plan. Nothing is marked as passed by default.' : 'Try another category, clear the search or load more entries.'}</p>
+            <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">{total === 0 ? (isProduction ? 'Completed analyses will appear here automatically.' : 'No runs, tests or bugs have been recorded yet. Start an analysis or add your first test plan. Nothing is marked as passed by default.') : 'Try another category, clear the search or load more entries.'}</p>
             <a href="/" class="mt-5 inline-block text-sm font-semibold text-brand-600">Go to analysis workspace →</a>
         </div>
     {/if}
