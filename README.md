@@ -117,6 +117,12 @@ Open the following services:
 
 See [HOW_TO_RUN.md](HOW_TO_RUN.md) for local development, operational notes, and citation-review guidance.
 
+## Deployment
+
+- Deploy `backend/` to Render and configure the provider, database, Redis, Qdrant, and CORS environment variables there.
+- Deploy `frontend/` to Vercel with the project root set to `frontend`.
+- Set `VITE_API_URL` in both the Vercel Production and Preview environments to the public Render backend URL. Without it, browser requests fall back to the frontend origin and return the SvelteKit 404 page.
+
 ## Tests
 
 ```bash
