@@ -17,6 +17,12 @@
     <img src="https://img.shields.io/badge/Backend_Tests-133_passing-2EA44F" alt="133 backend tests passing" />
     <img src="https://img.shields.io/badge/Frontend_Tests-20_passing-2EA44F" alt="20 frontend tests passing" />
   </p>
+
+  <p>
+    <a href="https://tracelens-three.vercel.app"><strong>Live Demo</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://tracelens-api-h7m2.onrender.com/health"><strong>API Health</strong></a>
+  </p>
 </div>
 
 > [!IMPORTANT]
