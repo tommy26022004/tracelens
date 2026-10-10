@@ -43,6 +43,7 @@
 - Links generated claims back to retrieved excerpts and original PDF pages for review.
 - Surfaces missing evidence, inconsistencies, and recommended human checks instead of hiding uncertainty.
 - Supports Gemini and Groq through a provider abstraction with deterministic fallback behaviour.
+- Includes a first-visit product tour and a browser-generated four-PDF synthetic demo package for recruiter-friendly evaluation.
 
 ## Architecture
 

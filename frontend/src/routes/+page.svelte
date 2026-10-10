@@ -1,11 +1,18 @@
 <script lang="ts">
     import { bankReconciliation } from '$lib/bankReconciliation';
+    import { createDemoPackage } from '$lib/demoPackage';
     import { apiUrl } from '$lib/http';
     import { onMount } from 'svelte';
     let savedResult = $state(false);
     let loadingSaved = $state(false);
+    let tourOpen = $state(false);
+    let tourStep = $state(0);
+    let demoLoading = $state(false);
     onMount(() => {
         const id = new URL(window.location.href).searchParams.get('saved');
+        if (!id && window.localStorage.getItem('tracelens-tour-seen-v1') !== 'true') {
+            tourOpen = true;
+        }
         if (!id) return;
         loadingSaved = true;
         void fetch(apiUrl(`/api/history/${encodeURIComponent(id)}`)).then(async (response) => {
@@ -58,6 +65,32 @@
 	let chunkError: string | null = $state(null);
 
 	const dimensionOrder = ['character', 'capacity', 'capital', 'collateral', 'conditions'] as const;
+	const tourSteps = [
+		{ title: 'Start with a complete package', body: 'Upload your own PDFs or load the four-file synthetic demo. TraceLens accepts bank, SSM, financial and tax documents.' },
+		{ title: 'Run the six-stage analysis', body: 'The workflow reads, extracts, validates, calculates ratios, assesses the 5Cs and prepares a source-traced summary.' },
+		{ title: 'Inspect every important claim', body: 'Open citations to compare extracted values with the original PDF page and retrieved context.' },
+		{ title: 'Keep a human in control', body: 'Ratings are provisional decision support. Review missing evidence, warnings and recommended checks before relying on a result.' }
+	];
+
+	function openTour() {
+		tourStep = 0;
+		tourOpen = true;
+	}
+
+	function closeTour() {
+		window.localStorage.setItem('tracelens-tour-seen-v1', 'true');
+		tourOpen = false;
+	}
+
+	async function loadDemoPackage() {
+		demoLoading = true;
+		analyseError = null;
+		await new Promise((resolve) => setTimeout(resolve, 180));
+		files = createDemoPackage();
+		demoLoading = false;
+		window.localStorage.setItem('tracelens-tour-seen-v1', 'true');
+		requestAnimationFrame(() => document.querySelector('[data-upload-card]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+	}
 
 	function addFiles(selected: File[]) {
 		const pdfs = selected.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
@@ -168,11 +201,60 @@
 </script>
 
 <section class="space-y-6">
+    {#if tourOpen}
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeTour(); }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="tour-title" class="w-full max-w-xl rounded-3xl border border-white/70 bg-[#f4f6ec] p-6 shadow-2xl sm:p-8">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-700">60-second product tour</p>
+                        <h2 id="tour-title" class="mt-2 text-2xl font-bold text-slate-950">{tourSteps[tourStep].title}</h2>
+                    </div>
+                    <button type="button" aria-label="Close product tour" class="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600" onclick={closeTour}>Close</button>
+                </div>
+                <p class="mt-5 text-base leading-7 text-slate-600">{tourSteps[tourStep].body}</p>
+                <div class="mt-7 grid grid-cols-4 gap-2" aria-label={`Tour step ${tourStep + 1} of ${tourSteps.length}`}>
+                    {#each tourSteps as _, index}
+                        <div class="h-2 rounded-full {index <= tourStep ? 'bg-brand-600' : 'bg-slate-200'}"></div>
+                    {/each}
+                </div>
+                <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
+                    <p class="text-sm text-slate-500">Step {tourStep + 1} of {tourSteps.length}</p>
+                    <div class="flex gap-2">
+                        {#if tourStep > 0}<button type="button" class="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold" onclick={() => tourStep -= 1}>Back</button>{/if}
+                        {#if tourStep < tourSteps.length - 1}
+                            <button type="button" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white" onclick={() => tourStep += 1}>Next</button>
+                        {:else}
+                            <button type="button" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white" onclick={closeTour}>Start exploring</button>
+                        {/if}
+                    </div>
+                </div>
+            </div>
+        </div>
+    {/if}
     {#if loadingSaved}<p role="status" class="p-5">Loading saved analysis — no AI call…</p>{/if}
     {#if savedResult}<div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Saved result — not recalculated. This is the original analysis and may contain previously identified errors. <a href="/cases" class="ml-2 font-semibold underline">Back to company cases</a></div>{/if}
 	{#if !result && !loadingSaved}
+	<div class="neo-card overflow-hidden rounded-3xl border border-brand-200 bg-gradient-to-br from-white via-brand-50/70 to-amber-50 p-6 shadow-sm sm:p-8">
+		<div class="grid gap-8 lg:grid-cols-[1.25fr_1fr] lg:items-center">
+			<div>
+				<p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-700">New to TraceLens?</p>
+				<h2 class="mt-3 max-w-2xl text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">Turn an SME loan package into a reviewable, source-linked assessment.</h2>
+				<p class="mt-4 max-w-2xl text-base leading-7 text-slate-600">Try a safe synthetic company package in one click, or bring your own authorised PDFs. No lending decision is made automatically.</p>
+				<div class="mt-6 flex flex-wrap gap-3">
+					<button type="button" class="neo-button rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60" disabled={demoLoading} onclick={loadDemoPackage}>{demoLoading ? 'Preparing demo…' : 'Try sample package'}</button>
+					<button type="button" class="neo-button rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700" onclick={openTour}>Take the 60-second tour</button>
+				</div>
+				<p class="mt-3 text-xs text-slate-500">Includes four generated PDFs for a fictitious Malaysian SME. Synthetic test data only.</p>
+			</div>
+			<ol class="grid gap-3 text-sm text-slate-700">
+				<li class="rounded-2xl border border-white/80 bg-white/65 p-4"><span class="mr-3 font-bold text-brand-700">01</span>Load bank, SSM, financial and tax PDFs</li>
+				<li class="rounded-2xl border border-white/80 bg-white/65 p-4"><span class="mr-3 font-bold text-brand-700">02</span>Run extraction, validation, ratios and 5C assessment</li>
+				<li class="rounded-2xl border border-white/80 bg-white/65 p-4"><span class="mr-3 font-bold text-brand-700">03</span>Review citations, limitations and human checks</li>
+			</ol>
+		</div>
+	</div>
 	<!-- Upload card -->
-	<div class="upload-surface neo-card rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+	<div data-upload-card class="upload-surface neo-card scroll-mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
 		<h2 class="text-base font-semibold text-slate-900">Upload SME application package</h2>
 		<p class="mt-1 text-sm text-slate-500">
 			Drag in or pick the bank statements, SSM registration, and other supporting PDFs. The agent
