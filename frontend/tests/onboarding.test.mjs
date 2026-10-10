@@ -30,4 +30,11 @@ test('the sample package contains four clearly synthetic PDF types', () => {
     assert.match(demo, /Company Tax Return/);
     assert.match(demo, /Income computation summary/);
     assert.match(demo, /Statement reconciliation/);
+    assert.match(demo, /const columns = \[52, 116, 385, 490, 543\]/);
+});
+
+test('assessment tabs use one explicit state transition and retain diagnostics', () => {
+    assert.match(page, /function selectView\(viewId: string\)/);
+    assert.match(page, /onclick=\{\(\) => selectView\(view.id\)\}/);
+    assert.match(page, /No calculated metrics are available/);
 });

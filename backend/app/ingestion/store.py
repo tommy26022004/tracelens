@@ -19,6 +19,13 @@ from app.core.embeddings import EmbeddingsProvider, get_embeddings
 from app.ingestion.chunker import Chunk
 
 COLLECTION_NAME = "loan_documents"
+FILTER_INDEX_FIELDS = (
+    "embedding_space",
+    "document_id",
+    "kind",
+    "source_metadata.application_id",
+    "source_metadata.document_kind",
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,7 @@ class VectorStore:
             api_key=settings.qdrant_api_key or None,
         )
         self._embeddings = embeddings or get_embeddings()
+        self._payload_indexes_ready = False
 
     @property
     def embedding_space(self) -> str:
@@ -54,15 +62,29 @@ class VectorStore:
 
     def ensure_collection(self) -> None:
         """Create the collection if it doesn't already exist."""
-        if self._client.collection_exists(COLLECTION_NAME):
+        if not self._client.collection_exists(COLLECTION_NAME):
+            self._client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=qmodels.VectorParams(
+                    size=self._embeddings.dimension,
+                    distance=qmodels.Distance.COSINE,
+                ),
+            )
+        self._ensure_payload_indexes()
+
+    def _ensure_payload_indexes(self) -> None:
+        if self._payload_indexes_ready:
             return
-        self._client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=qmodels.VectorParams(
-                size=self._embeddings.dimension,
-                distance=qmodels.Distance.COSINE,
-            ),
-        )
+        indexed_fields = set(self._client.get_collection(COLLECTION_NAME).payload_schema)
+        for field_name in FILTER_INDEX_FIELDS:
+            if field_name not in indexed_fields:
+                self._client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name=field_name,
+                    field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                    wait=True,
+                )
+        self._payload_indexes_ready = True
 
     def upsert_chunks(self, chunks: list[Chunk]) -> int:
         if not chunks:

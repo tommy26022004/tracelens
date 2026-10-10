@@ -133,7 +133,7 @@ function buildBankStatement(): string[] {
     addInfoRow(commands, 'Account Number:', 'TEST-ACCOUNT-001', 42, 629);
     addInfoRow(commands, 'Statement Period:', '01 Jan 2025 - 31 Jan 2025', 42, 599);
     addSectionLabel(commands, 'Transaction activity', 558);
-    const columns = [52, 116, 385, 456, 543];
+    const columns = [52, 116, 385, 490, 543];
     addTableHeader(commands, ['Date', 'Description', 'Debit (RM)', 'Credit (RM)', 'Balance (RM)'], columns, 530);
     const rows = [
         ['01/01/2025', 'CUSTOMER RECEIPT 01', '-', '2,000.00', '12,000.00'],

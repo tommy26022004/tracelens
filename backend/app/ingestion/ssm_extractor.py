@@ -136,7 +136,7 @@ def looks_like_ssm(pages: list[ParsedPage]) -> bool:
     """
     for page in pages:
         for span in page.spans:
-            if "SURUHANJAYA SYARIKAT MALAYSIA" in span.text:
+            if "SURUHANJAYA SYARIKAT MALAYSIA" in span.text.upper():
                 return True
             if "FORM 9" in span.text.upper() and "INCORPORATION" in page.text.upper():
                 return True

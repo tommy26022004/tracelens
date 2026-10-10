@@ -48,6 +48,9 @@
 		{ id: 'evidence', label: 'Documents & Evidence', description: 'Inspect source documents and the excerpts supplied to the AI.' },
 		{ id: 'technical', label: 'Technical Details', description: 'Inspect calculated metrics, processing steps and diagnostic messages.' }
 	];
+	function selectView(viewId: string) {
+		activeView = viewId;
+	}
 	const dimensionDescriptions = {
 		character: 'Business conduct and repayment behaviour',
 		capacity: 'Ability to meet repayment obligations',
@@ -396,7 +399,7 @@
 				<p class="neo-label text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence retrieval</p>
 				<p class="mt-3 text-xl font-semibold text-slate-900">{retrievalLabel(result.retrieval?.status)}</p>
 				<p class="mt-2 text-xs text-slate-600">Search status only — not evidence sufficiency across the 5Cs.</p>
-				<button type="button" class="mt-1 text-sm font-medium text-brand-700 hover:underline" onclick={() => activeView = 'evidence'}>{result.retrieval?.evidence.length ?? 0} excerpts · Inspect evidence →</button>
+				<button type="button" class="mt-1 text-sm font-medium text-brand-700 hover:underline" onclick={() => selectView('evidence')}>{result.retrieval?.evidence.length ?? 0} excerpts · Inspect evidence →</button>
 			</div>
 			<div class="neo-card neo-stat neo-stat-warning rounded-xl border border-amber-200 bg-amber-50 p-4">
 				<p class="neo-label text-xs font-semibold uppercase tracking-wide text-amber-800">Decision support only</p>
@@ -426,7 +429,7 @@
 		{/if}
 		<nav aria-label="Assessment sections" class="neo-tabs flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
 			{#each views as view}
-				<button type="button" aria-pressed={activeView === view.id} class="rounded-lg px-4 py-3 text-sm font-semibold transition-colors {activeView === view.id ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}" onclick={() => activeView = view.id}>{view.label}</button>
+				<button type="button" aria-pressed={activeView === view.id} data-view={view.id} class="rounded-lg px-4 py-3 text-sm font-semibold transition-colors {activeView === view.id ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}" onclick={() => selectView(view.id)}>{view.label}</button>
 			{/each}
 		</nav>
 		<p class="text-sm text-slate-500">{views.find((view) => view.id === activeView)?.description}</p>
@@ -602,6 +605,12 @@
 		{/if}
 
 		{#if activeView === 'technical'}
+        {#if !(result.tax_returns?.length) && !(result.ratios?.financial_ratios?.length) && !(result.ratios?.bank_statement_metrics?.length)}
+            <section class="neo-card rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                <h2 class="font-semibold">No calculated metrics are available</h2>
+                <p class="mt-2">The uploaded documents did not produce structured tax, financial or bank-statement metrics. Review document failures and extraction diagnostics below.</p>
+            </section>
+        {/if}
         {#each result.tax_returns ?? [] as tax}
             <section class="neo-card space-y-4 rounded-2xl p-6">
                 <h2 class="font-semibold">Tax return · Year of assessment {tax.year_of_assessment}</h2>

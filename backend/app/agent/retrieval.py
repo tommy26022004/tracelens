@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 
 from pydantic import BaseModel, Field
@@ -8,6 +9,8 @@ from pydantic import BaseModel, Field
 from app.agent.state import AgentState
 from app.core.config import settings
 from app.ingestion.store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 
 class EvidenceItem(BaseModel):
@@ -129,7 +132,8 @@ def retrieve_evidence(state: AgentState, store: VectorStore) -> RetrievalBundle:
                 limit=settings.rag_results_per_query * 4,
                 score_threshold=settings.rag_score_threshold,
             )
-        except Exception:
+        except Exception as exc:
+            logger.exception("Evidence retrieval failed for topic %s: %s", topic, exc)
             record.status = "error"
             bundle.warnings.append(
                 f"Retrieval failed for {topic}; review the relevant original documents manually."

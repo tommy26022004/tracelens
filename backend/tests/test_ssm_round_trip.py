@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ingestion.parser import parse_pdf
+from app.ingestion.parser import ParsedPage, TextSpan, parse_pdf
 from app.ingestion.ssm_extractor import extract_ssm_registration, looks_like_ssm
 from app.ingestion.ssm_synthetic import SSMGeneratorConfig, generate
 from app.ingestion.types import SSMRegistration
@@ -51,3 +51,23 @@ def test_ssm_extractor_rejects_non_ssm(tmp_path: Path) -> None:
 
     pages = parse_pdf(blank)
     assert not looks_like_ssm(pages)
+
+
+def test_ssm_detector_is_case_insensitive() -> None:
+    pages = [
+        ParsedPage(
+            page=1,
+            width=595,
+            height=842,
+            spans=[
+                TextSpan(
+                    text="Suruhanjaya Syarikat Malaysia - synthetic registry facsimile",
+                    page=1,
+                    bbox=(42, 100, 400, 120),
+                )
+            ],
+            needs_ocr=False,
+        )
+    ]
+
+    assert looks_like_ssm(pages)
