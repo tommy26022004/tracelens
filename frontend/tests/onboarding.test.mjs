@@ -24,4 +24,10 @@ test('the sample package contains four clearly synthetic PDF types', () => {
         ]
     );
     assert.match(demo, /SYNTHETIC TEST DATA - NOT AN OFFICIAL FINANCIAL DOCUMENT/);
+    assert.match(demo, /Statement of Account/);
+    assert.match(demo, /Company Registration Profile/);
+    assert.match(demo, /Financial Statements/);
+    assert.match(demo, /Company Tax Return/);
+    assert.match(demo, /Income computation summary/);
+    assert.match(demo, /Statement reconciliation/);
 });
