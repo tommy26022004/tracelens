@@ -1,0 +1,35 @@
+name: Browser demo integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  browser-pdf-full-graph:
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: pip install uv
+      - run: uv sync --project backend --group dev
+      - name: Run browser PDF through full graph and Qdrant
+        env:
+          FYP_RUN_INTEGRATION: "1"
+          QDRANT_URL: http://localhost:6333
+          LLM_PROVIDER: none
+        run: backend/.venv/bin/python -m pytest backend/tests/test_browser_demo_qdrant_e2e.py -q

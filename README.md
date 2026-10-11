@@ -62,7 +62,7 @@ flowchart LR
     J --> K[Human verification]
 ```
 
-The API is implemented with FastAPI. PostgreSQL, Redis, and Qdrant are provisioned through Docker Compose; the current research prototype keeps some analysis and review history in memory.
+The API is implemented with FastAPI. PostgreSQL, Redis, and Qdrant are provisioned through Docker Compose. Analysis-job progress is cached in Redis and durably mirrored to PostgreSQL so web-process restarts do not erase polling state.
 
 ## Validated workload
 
@@ -136,6 +136,10 @@ cd ../frontend
 npm install
 npm test
 npm run check
+
+# Browser-generated demo PDFs → full graph → live Qdrant
+cd ../backend
+FYP_RUN_INTEGRATION=1 uv run pytest tests/test_browser_demo_qdrant_e2e.py
 ```
 
 ## Repository structure

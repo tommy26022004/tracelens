@@ -57,8 +57,8 @@ def test_job_rejects_more_than_fifty_files() -> None:
 
 def test_stream_updates_each_completed_stage(monkeypatch):
     job_id = "progress-stages"
-    applications._jobs[job_id] = applications.AnalysisJobResponse(
-        job_id=job_id, status=applications.JobStatus.PROCESSING, progress=10, phase="reading")
+    applications._save_job(applications.AnalysisJobResponse(
+        job_id=job_id, status=applications.JobStatus.PROCESSING, progress=10, phase="reading"))
     observed = []
 
     class StreamingGraph:
@@ -66,16 +66,13 @@ def test_stream_updates_each_completed_stage(monkeypatch):
             assert stream_mode == "values"
             for node in ["parse", "extract", "validate", "ratios", "assess_5c", "summarise"]:
                 yield {"trace": [SimpleNamespace(node=node)]}
-                observed.append(applications._jobs[job_id].progress)
+                observed.append(applications._load_job(job_id).progress)
             yield {"trace": []}
 
     monkeypatch.setattr(applications, "compile_graph", lambda: StreamingGraph())
-    try:
-        applications._execute_analysis_graph(job_id, [])
-        assert observed == [20, 40, 50, 55, 80, 95]
-        assert applications._jobs[job_id].phase == "saving"
-    finally:
-        applications._jobs.pop(job_id, None)
+    applications._execute_analysis_graph(job_id, [])
+    assert observed == [20, 40, 50, 55, 80, 95]
+    assert applications._load_job(job_id).phase == "saving"
 
 
 def test_failed_job_does_not_show_one_hundred_percent(monkeypatch, tmp_path):
@@ -85,9 +82,7 @@ def test_failed_job_does_not_show_one_hundred_percent(monkeypatch, tmp_path):
 
     monkeypatch.setattr(applications, "_execute_analysis", fail)
     job_id = "failed-progress"
-    try:
-        applications._run_analysis_job(job_id, tmp_path / "upload", [])
-        assert applications._jobs[job_id].status == applications.JobStatus.FAILED
-        assert applications._jobs[job_id].progress == 55
-    finally:
-        applications._jobs.pop(job_id, None)
+    applications._run_analysis_job(job_id, tmp_path / "upload", [])
+    job = applications._load_job(job_id)
+    assert job.status == applications.JobStatus.FAILED
+    assert job.progress == 55

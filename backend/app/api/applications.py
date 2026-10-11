@@ -12,13 +12,12 @@ import logging
 import re
 import shutil
 import tempfile
-import threading
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import quote
 
 import pymupdf
@@ -34,6 +33,7 @@ from app.core.config import settings
 from app.core.provenance import source_fingerprint
 from app.ingestion.source_documents import SourceDocuments
 from app.ingestion.store import VectorStore
+from app.persistence.analysis_jobs import AnalysisJobStore, PersistentAnalysisJobStore
 
 router = APIRouter()
 MAX_FILES = 50
@@ -79,8 +79,16 @@ class AnalysisJobResponse(BaseModel):
     error: str | None = None
 
 
-_jobs: dict[str, AnalysisJobResponse] = {}
-_jobs_lock = threading.Lock()
+_job_store: AnalysisJobStore = PersistentAnalysisJobStore()
+
+
+def _save_job(job: AnalysisJobResponse) -> None:
+    _job_store.put(job.job_id, job.model_dump_json())
+
+
+def _load_job(job_id: str) -> AnalysisJobResponse | None:
+    payload = _job_store.get(job_id)
+    return AnalysisJobResponse.model_validate_json(payload) if payload is not None else None
 
 
 def _trace_payload(trace: list[ReasoningStep]) -> list[TraceItem]:
@@ -120,10 +128,11 @@ def _save_uploads(files: list[UploadFile], target_dir: Path) -> list[str]:
 
 
 def _update_job_progress(application_id: str, progress: int, phase: str) -> None:
-    with _jobs_lock:
-        job = _jobs.get(application_id)
-        if job is not None and job.status == JobStatus.PROCESSING:
-            _jobs[application_id] = job.model_copy(update={"progress": max(job.progress, progress), "phase": phase})
+    job = _load_job(application_id)
+    if job is not None and job.status == JobStatus.PROCESSING:
+        _save_job(
+            job.model_copy(update={"progress": max(job.progress, progress), "phase": phase})
+        )
 
 
 def _execute_analysis_graph(application_id: str, pdf_paths: list[str]) -> AnalysisResponse:
@@ -239,7 +248,7 @@ def _execute_analysis(application_id: str, pdf_paths: list[str]) -> AnalysisResp
 
 
 @router.post("/analyse", response_model=AnalysisResponse)
-async def analyse(files: list[UploadFile] = File(...)) -> AnalysisResponse:
+async def analyse(files: Annotated[list[UploadFile], File()]) -> AnalysisResponse:
     """Run the full credit-assessment graph against an uploaded package.
 
     Each PDF is detected, extracted, validated, ratio-analysed, 5C-rated,
@@ -259,13 +268,11 @@ async def analyse(files: list[UploadFile] = File(...)) -> AnalysisResponse:
 
 
 def _run_analysis_job(job_id: str, tmp_dir: Path, pdf_paths: list[str]) -> None:
-    with _jobs_lock:
-        _jobs[job_id] = AnalysisJobResponse(
-            job_id=job_id,
-            status=JobStatus.PROCESSING,
-            progress=10,
-            phase="reading",
+    _save_job(
+        AnalysisJobResponse(
+            job_id=job_id, status=JobStatus.PROCESSING, progress=10, phase="reading"
         )
+    )
     try:
         result = _execute_analysis(job_id, pdf_paths)
         response = AnalysisJobResponse(
@@ -276,8 +283,8 @@ def _run_analysis_job(job_id: str, tmp_dir: Path, pdf_paths: list[str]) -> None:
             result=result,
         )
     except Exception as error:
-        with _jobs_lock:
-            last_progress = _jobs[job_id].progress
+        current = _load_job(job_id)
+        last_progress = current.progress if current is not None else 10
         response = AnalysisJobResponse(
             job_id=job_id,
             status=JobStatus.FAILED,
@@ -287,14 +294,13 @@ def _run_analysis_job(job_id: str, tmp_dir: Path, pdf_paths: list[str]) -> None:
         )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-    with _jobs_lock:
-        _jobs[job_id] = response
+    _save_job(response)
 
 
 @router.post("/analyse/jobs", response_model=AnalysisJobResponse)
 async def start_analysis_job(
     background_tasks: BackgroundTasks,
-    files: list[UploadFile] = File(...),
+    files: Annotated[list[UploadFile], File()],
 ) -> AnalysisJobResponse:
     _validate_uploads(files)
     job_id = str(uuid.uuid4())
@@ -310,16 +316,21 @@ async def start_analysis_job(
         progress=5,
         phase="queued",
     )
-    with _jobs_lock:
-        _jobs[job_id] = queued
+    try:
+        _save_job(queued)
+    except RuntimeError as error:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(503, str(error)) from error
     background_tasks.add_task(_run_analysis_job, job_id, tmp_dir, pdf_paths)
     return queued
 
 
 @router.get("/analyse/jobs/{job_id}", response_model=AnalysisJobResponse)
 async def get_analysis_job(job_id: str) -> AnalysisJobResponse:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
+    try:
+        job = _load_job(job_id)
+    except RuntimeError as error:
+        raise HTTPException(503, str(error)) from error
     if job is None:
         raise HTTPException(404, "Analysis job not found")
     return job

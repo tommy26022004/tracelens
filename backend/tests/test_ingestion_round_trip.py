@@ -8,12 +8,18 @@ can be measured.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from app.ingestion.extractor import extract_bank_statement
-from app.ingestion.parser import parse_pdf
+from app.ingestion.extractor import (
+    _detect_transaction_columns,
+    _group_into_rows,
+    _parse_transaction_row,
+    extract_bank_statement,
+)
+from app.ingestion.parser import TextSpan, parse_pdf
 from app.ingestion.synthetic import GeneratorConfig, generate
 
 
@@ -61,6 +67,50 @@ def test_paginated_statement_recovers_all_rows(tmp_path: Path) -> None:
     # Last transaction's balance must match the declared closing balance —
     # the strongest single check that no row was dropped or duplicated.
     assert actual.transactions[-1].balance == actual.closing_balance
+
+
+def test_transaction_columns_follow_shifted_headers() -> None:
+    def span(text: str, x: float, y: float) -> TextSpan:
+        return TextSpan(text=text, page=1, bbox=(x, y, x + 40, y + 10))
+
+    spans = [
+        span("Date", 20, 100),
+        span("Description", 90, 100),
+        span("Debit (RM)", 510, 100),
+        span("Credit (RM)", 590, 100),
+        span("Balance (RM)", 680, 100),
+        span("01/01/2025", 20, 125),
+        span("CUSTOMER RECEIPT", 90, 125),
+        span("2,000.00", 590, 125),
+        span("12,000.00", 680, 125),
+        span("02/01/2025", 20, 150),
+        span("SUPPLIER PAYMENT", 90, 150),
+        span("1,200.00", 510, 150),
+        span("10,800.00", 680, 150),
+    ]
+    rows = _group_into_rows(spans)
+    columns = _detect_transaction_columns(rows)
+    credit = _parse_transaction_row(rows[1], 1, columns)
+    debit = _parse_transaction_row(rows[2], 1, columns)
+
+    assert credit.credit == Decimal("2000.00")
+    assert credit.debit is None
+    assert credit.balance == Decimal("12000.00")
+    assert debit.debit == Decimal("1200.00")
+    assert debit.credit is None
+    assert debit.balance == Decimal("10800.00")
+
+
+def test_transaction_columns_split_merged_header_span() -> None:
+    spans = [
+        TextSpan("DATE", 1, (20, 100, 60, 110)),
+        TextSpan("DESCRIPTION", 1, (90, 100, 180, 110)),
+        TextSpan("DEBIT (RM)", 1, (430, 100, 490, 110)),
+        TextSpan("CREDIT (RM) BALANCE (RM)", 1, (500, 100, 700, 110)),
+    ]
+    columns = _detect_transaction_columns([spans])
+
+    assert columns.debit < columns.credit < columns.balance
 
 
 def test_extractor_rejects_non_statement(tmp_path: Path) -> None:

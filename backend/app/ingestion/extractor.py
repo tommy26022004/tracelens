@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -26,6 +27,73 @@ DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 MONEY_RE = re.compile(r"^-?\d{1,3}(?:,\d{3})*\.\d{2}$")
 PERIOD_RE = re.compile(r"Statement Period\s*:?\s*(\d{2} \w{3} \d{4})\s*-\s*(\d{2} \w{3} \d{4})")
 ROW_TOLERANCE: float = 3.0  # spans within this many points share a row
+
+
+@dataclass(frozen=True)
+class TransactionColumns:
+    date: float
+    description: float
+    debit: float
+    credit: float
+    balance: float
+    reference: float | None = None
+
+
+def _span_midpoint(span: TextSpan) -> float:
+    return (span.bbox[0] + span.bbox[2]) / 2
+
+
+def _normalise_header(value: str) -> str:
+    return re.sub(r"[^a-z]+", " ", value.lower()).strip()
+
+
+def _header_position(span: TextSpan, names: tuple[str, ...]) -> float | None:
+    text = _normalise_header(span.text)
+    for name in sorted(names, key=len, reverse=True):
+        match = re.search(rf"\b{re.escape(name)}\b", text)
+        if match is None:
+            continue
+        width = span.bbox[2] - span.bbox[0]
+        centre_ratio = ((match.start() + match.end()) / 2) / max(len(text), 1)
+        return span.bbox[0] + width * centre_ratio
+    return None
+
+
+def _detect_transaction_columns(rows: list[list[TextSpan]]) -> TransactionColumns:
+    """Infer transaction column centres from the table header text."""
+    aliases = {
+        "date": ("date", "transaction date"),
+        "description": ("description", "details", "transaction details"),
+        "reference": ("reference", "reference no", "ref", "ref no"),
+        "debit": ("debit", "debit rm", "withdrawal", "money out"),
+        "credit": ("credit", "credit rm", "deposit", "money in"),
+        "balance": ("balance", "balance rm", "running balance"),
+    }
+    required = {"date", "description", "debit", "credit", "balance"}
+    best: dict[str, float] = {}
+    for row in rows:
+        candidates: dict[str, float] = {}
+        for span in row:
+            for key, names in aliases.items():
+                position = _header_position(span, names)
+                if position is not None:
+                    candidates[key] = position
+        if len(required & candidates.keys()) > len(required & best.keys()):
+            best = candidates
+        if required <= candidates.keys():
+            best = candidates
+            break
+    if not required <= best.keys():
+        missing = ", ".join(sorted(required - best.keys()))
+        raise ValueError(f"Could not detect transaction columns from header; missing: {missing}")
+    return TransactionColumns(
+        date=best["date"],
+        description=best["description"],
+        reference=best.get("reference"),
+        debit=best["debit"],
+        credit=best["credit"],
+        balance=best["balance"],
+    )
 
 
 def _to_decimal(value: str) -> Decimal:
@@ -74,43 +142,48 @@ def _row_is_transaction(row: list[TextSpan]) -> bool:
     return bool(row) and DATE_RE.match(row[0].text) is not None
 
 
-def _parse_transaction_row(row: list[TextSpan], page: int) -> Transaction:
-    """Map cells to schema columns by x-position.
-
-    Layout (see synthetic.COLUMNS):
-        Date | Description | Debit | Credit | Balance
-    """
+def _parse_transaction_row(
+    row: list[TextSpan], page: int, columns: TransactionColumns
+) -> Transaction:
+    """Map transaction cells to the nearest detected header column."""
     date_span = row[0]
     money_spans = [s for s in row[1:] if MONEY_RE.match(s.text)]
     text_spans = [s for s in row[1:] if not MONEY_RE.match(s.text)]
-    description_spans = [s for s in text_spans if s.bbox[0] < 265]
-    reference_spans = [s for s in text_spans if s.bbox[0] >= 265]
+    text_columns = {"description": columns.description}
+    if columns.reference is not None:
+        text_columns["reference"] = columns.reference
+    assigned_text: dict[str, list[TextSpan]] = {"description": [], "reference": []}
+    for span in text_spans:
+        key = min(text_columns, key=lambda name: abs(_span_midpoint(span) - text_columns[name]))
+        assigned_text[key].append(span)
+    description_spans = assigned_text["description"]
+    reference_spans = assigned_text["reference"]
     description = " ".join(s.text for s in description_spans).strip()
     reference_no = " ".join(s.text for s in reference_spans).strip() or None
 
-    # Balance is always the right-most money span.
     if not money_spans:
         raise ValueError(f"Transaction row missing money cells: {row!r}")
-    balance = _to_decimal(money_spans[-1].text)
-
-    debit: Decimal | None = None
-    credit: Decimal | None = None
-    # Any money span before the balance is either debit or credit, distinguished
-    # by its x-position relative to the column boundaries declared by the
-    # generator (debit ≈ x=345, credit ≈ x=425).
-    for span in money_spans[:-1]:
-        x_mid = (span.bbox[0] + span.bbox[2]) / 2
-        if x_mid < 440:
-            debit = _to_decimal(span.text)
-        else:
-            credit = _to_decimal(span.text)
+    money_columns = {
+        "debit": columns.debit,
+        "credit": columns.credit,
+        "balance": columns.balance,
+    }
+    assigned_money: dict[str, Decimal | None] = {name: None for name in money_columns}
+    for span in money_spans:
+        key = min(money_columns, key=lambda name: abs(_span_midpoint(span) - money_columns[name]))
+        if assigned_money[key] is not None:
+            raise ValueError(f"Transaction row has multiple values in {key} column: {row!r}")
+        assigned_money[key] = _to_decimal(span.text)
+    balance = assigned_money["balance"]
+    if balance is None:
+        raise ValueError(f"Transaction row missing balance cell: {row!r}")
 
     return Transaction(
         txn_date=_parse_date_cell(date_span.text),
         description=description,
         reference_no=reference_no,
-        debit=debit,
-        credit=credit,
+        debit=assigned_money["debit"],
+        credit=assigned_money["credit"],
         balance=balance,
         page=page,
         source=source_location(row),
@@ -157,9 +230,12 @@ def extract_bank_statement(pages: list[ParsedPage]) -> BankStatement:
     transactions: list[Transaction] = []
     for parsed in pages:
         rows = _group_into_rows(parsed.spans)
+        if not any(_row_is_transaction(row) for row in rows):
+            continue
+        columns = _detect_transaction_columns(rows)
         for row in rows:
             if _row_is_transaction(row):
-                transactions.append(_parse_transaction_row(row, parsed.page))
+                transactions.append(_parse_transaction_row(row, parsed.page, columns))
 
     last_rows = _group_into_rows(pages[-1].spans)
     opening = _find_money_after(last_rows, "Opening Balance")

@@ -222,6 +222,23 @@ class VectorStore:
             ),
         )
 
+    def delete_application(self, application_id: str) -> None:
+        """Delete only vectors owned by one analysis run."""
+        self._client.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=qmodels.FilterSelector(
+                filter=qmodels.Filter(
+                    must=[
+                        qmodels.FieldCondition(
+                            key="source_metadata.application_id",
+                            match=qmodels.MatchValue(value=application_id),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+
 
 def _stable_point_id(chunk_id: str) -> int:
     """Qdrant point ids must be int or UUID; hash the chunk_id to int64."""

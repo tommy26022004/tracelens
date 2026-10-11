@@ -477,13 +477,13 @@
 					<summary class="cursor-pointer text-sm font-semibold text-brand-700 hover:text-brand-600">
 						Read full assessment and supporting sources
 					</summary>
-                    <div class="mt-5 grid items-start gap-4 text-sm leading-7 text-slate-700 lg:grid-cols-2">
+                    <div class="bento-flow bento-flow-two mt-5 text-sm leading-7 text-slate-700">
                         {#each narrativeParagraphs as paragraph, index}
                             {@const groupHeading = assessmentGroupHeading(paragraph)}
                             {#if groupHeading}
-                                <h3 class="border-b border-brand-200 pb-2 pt-3 font-semibold text-brand-700 lg:col-span-2">{groupHeading}</h3>
+                                <h3 class="bento-heading border-b border-brand-200 pb-2 pt-3 font-semibold text-brand-700">{groupHeading}</h3>
                             {:else}
-                            <section class="rounded-2xl border border-white/80 bg-white/40 p-5">
+                            <section class="bento-item rounded-2xl border border-white/80 bg-white/40 p-5">
                                 <h3 class="mb-3 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-brand-700"><span class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100">{String(narrativeParagraphs.slice(0, index + 1).filter((item) => !assessmentGroupHeading(item)).length).padStart(2, '0')}</span>{assessmentHeading(paragraph)}</h3>
                                 <p class="whitespace-pre-line break-words"><CitedText text={paragraph} {references} onCitationClick={openChunk} /></p>
                             </section>
@@ -512,10 +512,10 @@
 			<div class="neo-card rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
 				<h2 class="text-base font-semibold text-slate-900">5C credit assessment</h2>
 				<p class="mt-1 text-sm text-slate-500">Provisional ratings. Expand a dimension to read the full rationale and inspect its sources.</p>
-				<div class="mt-6 grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+                <div class="bento-flow bento-flow-three mt-6">
 					{#each dimensionOrder as key (key)}
 						{@const dim = result.five_c[key]}
-						<details class="neo-dimension group rounded-lg border border-slate-200 p-4">
+                        <details class="bento-item neo-dimension group rounded-lg border border-slate-200 p-4">
 							<summary class="cursor-pointer">
 							<span class="ml-1 font-semibold capitalize text-slate-900">{dim.name}</span>
 							<span
@@ -735,3 +735,41 @@
 	error={chunkError}
 	onClose={closeChunk}
 />
+
+<style>
+    .bento-flow {
+        column-gap: 1.25rem;
+        columns: 1;
+    }
+
+    .bento-item {
+        break-inside: avoid;
+        display: inline-block;
+        margin: 0 0 1.25rem;
+        width: 100%;
+    }
+
+    .bento-heading {
+        break-after: avoid;
+        break-inside: avoid;
+        margin-bottom: 1rem;
+    }
+
+    @media (min-width: 768px) {
+        .bento-flow-three {
+            columns: 2;
+        }
+    }
+
+    @media (min-width: 1024px) {
+        .bento-flow-two {
+            columns: 2;
+        }
+    }
+
+    @media (min-width: 1280px) {
+        .bento-flow-three {
+            columns: 3;
+        }
+    }
+</style>

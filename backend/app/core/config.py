@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Persistence
     database_url: str = "postgresql+psycopg://fyp:fyp@localhost:5432/fyp"
     redis_url: str = "redis://localhost:6379/0"
+    analysis_job_ttl_seconds: int = Field(default=604800, ge=3600)
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
 

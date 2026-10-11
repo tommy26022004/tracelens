@@ -19,6 +19,17 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tracelens-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tracelens-jobs
+          property: connectionString
+      - key: ANALYSIS_JOB_TTL_SECONDS
+        value: 604800
       - key: CORS_ORIGINS
         sync: false
       - key: SOURCE_DOCUMENTS_DIR
@@ -28,3 +39,14 @@ services:
     buildFilter:
       paths:
         - backend/**
+
+  - type: keyvalue
+    name: tracelens-jobs
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: tracelens-postgres
+    plan: free
+    databaseName: tracelens
+    user: tracelens
