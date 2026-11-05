@@ -4,17 +4,13 @@ Turns the loose `TextSpan`s produced by `parser.parse_pdf` into a
 structured `BankStatement` (account metadata, period, transactions,
 totals).
 
-This first pass is heuristic — it locates spans by row (y-coordinate)
-and by column boundaries declared by the generator. A second pass using
-LLM-assisted extraction is planned in Phase 3 to handle real Malaysian
-banks whose column positions vary. Keeping this layer deterministic now
-gives us a measurable baseline against the synthetic ground truth.
+This deterministic extractor groups spans into rows and detects transaction
+columns from their headers rather than assuming fixed column coordinates.
 """
 
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -110,14 +106,17 @@ def _parse_period(value: str) -> date:
 
 def _group_into_rows(spans: list[TextSpan]) -> list[list[TextSpan]]:
     """Cluster spans whose y-midpoint is within ROW_TOLERANCE of each other."""
-    by_y: dict[int, list[TextSpan]] = defaultdict(list)
-    for span in spans:
+    rows: list[list[TextSpan]] = []
+    row_centres: list[float] = []
+    for span in sorted(spans, key=lambda item: (item.bbox[1] + item.bbox[3]) / 2):
         y_mid = (span.bbox[1] + span.bbox[3]) / 2
-        # bucket by quantised y; collisions get merged below
-        bucket = round(y_mid / ROW_TOLERANCE) * ROW_TOLERANCE
-        by_y[int(bucket)].append(span)
-    rows = [sorted(group, key=lambda s: s.bbox[0]) for _, group in sorted(by_y.items())]
-    return rows
+        if rows and abs(y_mid - row_centres[-1]) <= ROW_TOLERANCE:
+            rows[-1].append(span)
+            row_centres[-1] = sum((item.bbox[1] + item.bbox[3]) / 2 for item in rows[-1]) / len(rows[-1])
+        else:
+            rows.append([span])
+            row_centres.append(y_mid)
+    return [sorted(row, key=lambda item: item.bbox[0]) for row in rows]
 
 
 def _find_label(rows: list[list[TextSpan]], prefix: str) -> str | None:
