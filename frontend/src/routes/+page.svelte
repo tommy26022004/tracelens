@@ -1,6 +1,8 @@
 <script lang="ts">
     import { bankReconciliation } from '$lib/bankReconciliation';
     import { validatePackage } from '$lib/packageValidation';
+    import { buildReadinessActions } from '$lib/readinessAdvisor';
+    import { buildReviewReport } from '$lib/reviewReport';
     import { createDemoPackage } from '$lib/demoPackage';
     import { apiUrl } from '$lib/http';
     import { onMount } from 'svelte';
@@ -38,6 +40,7 @@
 	let analysing = $state(false);
     let result: AnalysisResponse | null = $state(null);
     const references = $derived.by(() => result?.citation_sources ?? {});
+    const readinessActions = $derived(result ? buildReadinessActions(result) : []);
 	let analyseError: string | null = $state(null);
 	let uploadNotice: string | null = $state(null);
 	let jobProgress = $state(0);
@@ -147,6 +150,18 @@
 		analyseError = null;
 		jobProgress = 0;
 		jobPhase = '';
+	}
+
+	function openReviewReport() {
+		if (!result) return;
+		const reportWindow = window.open('', '_blank');
+		if (!reportWindow) {
+			analyseError = 'The browser blocked the review report window. Allow pop-ups for this local site and try again.';
+			return;
+		}
+		reportWindow.opener = null;
+		reportWindow.document.write(buildReviewReport(result));
+		reportWindow.document.close();
 	}
 
 	function formatMoney(value: string): string {
@@ -413,13 +428,13 @@
 				<p class="mt-1 text-xs text-slate-500">Application ID: {result.application_id}</p>
                 <a href="/cases" class="mt-2 inline-block text-sm font-semibold text-brand-700 underline">Manage company case / link this saved run →</a>
 			</div>
-			<button
+			<div class="flex flex-wrap gap-2"><button type="button" class="neo-button rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white" onclick={openReviewReport}>Print / save review report</button><button
 				type="button"
 				class="neo-button rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
 				onclick={resetAnalysis}
 			>
 				Analyse another package
-			</button>
+			</button></div>
 		</div>
 		<div class="grid gap-6 sm:grid-cols-3">
 			<div class="neo-card neo-stat rounded-xl border border-slate-200 bg-white p-4">
@@ -465,6 +480,23 @@
 			{/each}
 		</nav>
 		<p class="text-sm text-slate-500">{views.find((view) => view.id === activeView)?.description}</p>
+		{#if activeView === 'overview'}
+			<section class="neo-card rounded-xl border border-slate-200 bg-white p-6 shadow-sm" aria-labelledby="readiness-title">
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div><h2 id="readiness-title" class="text-base font-semibold text-slate-900">Document readiness advisor</h2><p class="mt-1 text-sm text-slate-600">Evidence gaps identified from the processed package—not a credit score or approval decision.</p></div>
+					<span class="rounded-full px-3 py-1 text-xs font-semibold {readinessActions.length ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-900'}">{readinessActions.length ? `${readinessActions.length} review action${readinessActions.length === 1 ? '' : 's'}` : 'No inventory gaps detected'}</span>
+				</div>
+				{#if readinessActions.length}
+					<ul class="mt-4 grid gap-3 md:grid-cols-2">
+						{#each readinessActions as action (action.id)}
+							<li class="rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 class="font-semibold text-amber-950">{action.title}</h3><p class="mt-2 text-sm text-slate-700">{action.detail}</p>{#if action.dimensions.length}<p class="mt-2 text-xs font-medium text-amber-900">Relevant 5Cs: {action.dimensions.join(', ')}</p>{/if}</li>
+						{/each}
+					</ul>
+				{:else}
+					<p class="mt-4 text-sm text-slate-600">The inventory checks found no listed gaps. This does not verify authenticity, financial accuracy, or evidence sufficiency; continue reviewing the original documents.</p>
+				{/if}
+			</section>
+		{/if}
 		{#if activeView === 'evidence' && result.package_inventory && 'total_documents' in result.package_inventory}
 			{@const inventory = result.package_inventory}
 			<div class="neo-card rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
