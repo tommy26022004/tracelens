@@ -1,5 +1,6 @@
 <script lang="ts">
     import { bankReconciliation } from '$lib/bankReconciliation';
+    import { validatePackage } from '$lib/packageValidation';
     import { createDemoPackage } from '$lib/demoPackage';
     import { apiUrl } from '$lib/http';
     import { onMount } from 'svelte';
@@ -38,6 +39,7 @@
     let result: AnalysisResponse | null = $state(null);
     const references = $derived.by(() => result?.citation_sources ?? {});
 	let analyseError: string | null = $state(null);
+	let uploadNotice: string | null = $state(null);
 	let jobProgress = $state(0);
 	let jobPhase = $state('');
 	const phaseLabels: Record<string, string> = { uploading: 'Uploading documents', queued: 'Preparing analysis', reading: 'Reading documents', extracting: 'Extracting information', validating: 'Checking documents', calculating: 'Calculating metrics', assessing: 'Assessing the 5Cs', summarising: 'Preparing assessment', saving: 'Saving results', completed: 'Analysis complete', failed: 'Analysis stopped' };
@@ -48,6 +50,8 @@
 		{ id: 'evidence', label: 'Documents & Evidence', description: 'Inspect source documents and the excerpts supplied to the AI.' },
 		{ id: 'technical', label: 'Technical Details', description: 'Inspect calculated metrics, processing steps and diagnostic messages.' }
 	];
+	const journeyStep = $derived(result ? 3 : analysing ? 2 : files.length > 0 ? 1 : 0);
+	const packageError = $derived(files.length > 0 ? validatePackage(files) : null);
 	function selectView(viewId: string) {
 		activeView = viewId;
 	}
@@ -90,6 +94,7 @@
 		analyseError = null;
 		await new Promise((resolve) => setTimeout(resolve, 180));
 		files = createDemoPackage();
+		uploadNotice = 'Synthetic package ready. Review the four PDFs below, then select Analyse package.';
 		demoLoading = false;
 		window.localStorage.setItem('tracelens-tour-seen-v1', 'true');
 		requestAnimationFrame(() => document.querySelector('[data-upload-card]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -97,6 +102,10 @@
 
 	function addFiles(selected: File[]) {
 		const pdfs = selected.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
+		const rejected = selected.length - pdfs.length;
+		uploadNotice = rejected > 0
+			? `${rejected} non-PDF file${rejected === 1 ? ' was' : 's were'} not added. Select PDF documents only.`
+			: pdfs.length > 0 ? `${pdfs.length} PDF${pdfs.length === 1 ? '' : 's'} added. Review your package before analysis.` : null;
 		const merged = new Map(
 			files.map((file) => [`${file.name}:${file.size}:${file.lastModified}`, file])
 		);
@@ -123,6 +132,7 @@
 
 	function removeFile(fileToRemove: File) {
 		files = files.filter((file) => file !== fileToRemove);
+		if (files.length === 0) uploadNotice = null;
 	}
 
 	function resetAnalysis() {
@@ -132,6 +142,7 @@
 		sourceSearch = '';
 		closeChunk();
 		files = [];
+		uploadNotice = null;
 		result = null;
 		analyseError = null;
 		jobProgress = 0;
@@ -155,6 +166,11 @@
 
 	async function submit() {
 		if (files.length === 0) return;
+		const validationError = validatePackage(files);
+		if (validationError) {
+			analyseError = validationError;
+			return;
+		}
 		activeView = 'overview';
 		analysing = true;
 		analyseError = null;
@@ -204,6 +220,20 @@
 </script>
 
 <section class="space-y-6">
+    <nav aria-label="Analysis journey" class="rounded-2xl border border-brand-200 bg-white/70 p-4 shadow-sm">
+        <ol class="grid gap-3 text-sm sm:grid-cols-3">
+            {#each [
+                { title: 'Prepare documents', detail: 'Upload PDFs or load the synthetic demo' },
+                { title: 'Run analysis', detail: 'Follow progress and any processing warnings' },
+                { title: 'Review evidence', detail: 'Check citations and verify findings' }
+            ] as step, index}
+                <li aria-current={journeyStep === index + 1 ? 'step' : undefined} class="flex gap-3 rounded-xl border p-3 {journeyStep >= index + 1 ? 'border-brand-300 bg-brand-50' : 'border-slate-200 bg-white/60'}">
+                    <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">{index + 1}</span>
+                    <span><strong class="block text-slate-900">{step.title}</strong><span class="text-xs text-slate-600">{step.detail}</span></span>
+                </li>
+            {/each}
+        </ol>
+    </nav>
     {#if tourOpen}
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeTour(); }}>
             <div role="dialog" aria-modal="true" aria-labelledby="tour-title" class="w-full max-w-xl rounded-3xl border border-white/70 bg-[#f4f6ec] p-6 shadow-2xl sm:p-8">
@@ -264,6 +294,8 @@
 			will run all six steps and return a source-traced summary.
 		</p>
 		<p class="mt-2 text-xs text-slate-400">Supports up to 50 PDFs and 100 MB per package.</p>
+		{#if uploadNotice}<p role="status" class="mt-3 rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-800">{uploadNotice}</p>{/if}
+		{#if packageError}<p role="alert" class="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{packageError}</p>{/if}
 
 		<div
 			class="neo-inset mt-4 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 p-8 text-center transition-colors"
@@ -330,7 +362,7 @@
 		<button
 			type="button"
 			class="neo-button mt-4 inline-flex items-center rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-			disabled={files.length === 0 || analysing}
+			disabled={files.length === 0 || analysing || !!packageError}
 			onclick={submit}
 		>
 			{#if analysing}
