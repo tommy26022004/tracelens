@@ -1,0 +1,83 @@
+{
+  "dataset": "synthetic-bank-seed-21-v1",
+  "results": [
+    {
+      "scenario": "original",
+      "scores": {
+        "previous": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        },
+        "current": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        }
+      }
+    },
+    {
+      "scenario": "horizontal_shift",
+      "scores": {
+        "previous": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        },
+        "current": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        }
+      }
+    },
+    {
+      "scenario": "minor_jitter",
+      "scores": {
+        "previous": {
+          "error": "ValueError",
+          "accuracy": 0.0
+        },
+        "current": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        }
+      }
+    },
+    {
+      "scenario": "moderate_jitter",
+      "scores": {
+        "previous": {
+          "error": "ValueError",
+          "accuracy": 0.0
+        },
+        "current": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        }
+      }
+    },
+    {
+      "scenario": "boundary_jitter",
+      "scores": {
+        "previous": {
+          "error": "ValueError",
+          "accuracy": 0.0
+        },
+        "current": {
+          "fields_matched": 79,
+          "fields_total": 79,
+          "accuracy": 1.0
+        }
+      }
+    },
+    {
+      "scenario": "image_only_scan",
+      "needs_ocr_detected": true,
+      "unsupported_extraction_rejected": true
+    }
+  ],
+  "scope": "Synthetic PDF; geometry perturbations applied after parsing. Not a real-bank accuracy estimate."
+}

@@ -213,3 +213,5 @@ Thumbs.db
 /backend/data/source_documents/
 /backend/data/development_history/
 /data/development_history/
+/docs/evaluation/sus_responses.csv
+/docs/evaluation/sus_results.json
